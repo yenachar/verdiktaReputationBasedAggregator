@@ -23,11 +23,13 @@ module.exports = async function(callback) {
     await aggregator.setConfig(4, 3, 2, 300);
     console.log('Aggregator configured');
 
-    // ---------------------------------------------------------------
+    // --------------------------------------------------------------------------------------
     // Add sample oracle and jobID (replace with your oracle details)
-    // ---------------------------------------------------------------
+    // --------------------------------------------------------------------------------------
     const oracleAddress = "0x1f3829ca4Bce27ECbB55CAA8b0F8B51E4ba2cCF6";
     const jobId = web3.utils.fromAscii("38f19572c51041baa5f2dea284614590").padEnd(66, '0');
+    // --------------------------------------------------------------------------------------
+	  
     const fee = web3.utils.toWei("0.1", "ether");
 
     console.log('Adding oracle configuration...');
