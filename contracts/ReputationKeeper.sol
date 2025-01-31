@@ -130,22 +130,25 @@ contract ReputationKeeper is Ownable {
             }
         }
         
-        require(activeCount >= count, "Not enough active oracles");
-        
-        address[] memory selectedOracles = new address[](count);
-        for (uint256 i = 0; i < count; i++) {
-            uint256 selection = uint256(keccak256(abi.encodePacked(block.timestamp, block.prevrandao, i))) % totalWeight;
-            uint256 sumWeight = 0;
-            
-            for (uint256 j = 0; j < activeCount; j++) {
-                sumWeight += weights[j];
-                if (sumWeight > selection) {
-                    selectedOracles[i] = activeOracles[j];
-                    break;
-                }
-            }
+        require(activeCount >= count, "No active oracles--at least one is needed");
+
+address[] memory selectedOracles = new address[](count);
+for (uint256 i = 0; i < count; i++) {
+    uint256 selection = uint256(keccak256(abi.encodePacked(block.timestamp, block.prevrandao, i))) % totalWeight;
+    uint256 sumWeight = 0;
+    for (uint256 j = 0; j < activeCount; j++) {
+        sumWeight += weights[j];
+        if (sumWeight > selection) {
+            selectedOracles[i] = activeOracles[j];
+            break;
         }
-        
+    }
+    // If we somehow didn't select an oracle (shouldn't happen due to weights), use the first one
+    if (selectedOracles[i] == address(0)) {
+        selectedOracles[i] = activeOracles[0];
+    }
+}
+
         return selectedOracles;
     }
 
