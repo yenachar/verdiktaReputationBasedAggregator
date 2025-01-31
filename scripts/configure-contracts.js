@@ -23,22 +23,17 @@ module.exports = async function(callback) {
     await aggregator.setConfig(4, 3, 2, 300);
     console.log('Aggregator configured');
 
-    // --------------------------------------------------------------------------------------
-    // Add sample oracle and jobID (replace with your oracle details)
-    // --------------------------------------------------------------------------------------
-    const oracleAddress = "0x1f3829ca4Bce27ECbB55CAA8b0F8B51E4ba2cCF6";
-    const jobId = web3.utils.fromAscii("38f19572c51041baa5f2dea284614590").padEnd(66, '0');
-    // --------------------------------------------------------------------------------------
-	  
-    const fee = web3.utils.toWei("0.1", "ether");
+    // Approve aggregator to use keeper
+    console.log('Approving aggregator in keeper...');
+    await keeper.approveContract(aggregator.address);
+    console.log('Aggregator approved in keeper');
 
-    console.log('Adding oracle configuration...');
-    await aggregator.addOracleConfig(
-        oracleAddress,
-        jobId,
-        fee
-    );
-    console.log('Oracle configuration added');
+    // Transfer some VDKA tokens to the oracle address
+    const oracleAddress = "0x1f3829ca4Bce27ECbB55CAA8b0F8B51E4ba2cCF6";
+    const stakeAmount = web3.utils.toWei("100", "ether");
+    console.log('Transferring VDKA tokens to oracle operator...');
+    await verdikta.transfer(oracleAddress, stakeAmount);
+    console.log('VDKA tokens transferred');
 
     console.log('Post-deployment configuration completed successfully');
     callback();

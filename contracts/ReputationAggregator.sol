@@ -8,13 +8,6 @@ import "./ReputationKeeper.sol";
 contract ReputationAggregator is ChainlinkClient, Ownable {
     using Chainlink for Chainlink.Request;
     
-    struct OracleConfig {
-        address operator;
-        bytes32 jobId;
-        uint256 fee;
-        bool isActive;
-    }
-    
     struct Response {
         uint256[] likelihoods;
         string justificationCID;
@@ -39,7 +32,6 @@ contract ReputationAggregator is ChainlinkClient, Ownable {
     ReputationKeeper public reputationKeeper;
     mapping(bytes32 => AggregatedEvaluation) public aggregatedEvaluations;
     mapping(bytes32 => bytes32) public requestIdToAggregatorId;
-    mapping(address => OracleConfig) public oracleConfigs;
     
     uint256 public oraclesToPoll = 4;      // Default 4
     uint256 public requiredResponses = 3;   // Default 3
@@ -79,30 +71,10 @@ contract ReputationAggregator is ChainlinkClient, Ownable {
         emit ConfigUpdated(_oraclesToPoll, _requiredResponses, _clusterSize);
     }
     
-    function addOracleConfig(
-        address operator,
-        bytes32 jobId,
-        uint256 fee
-    ) external onlyOwner {
-        require(operator != address(0), "Invalid operator address");
-        require(fee > 0, "Fee must be greater than 0");
-        
-        oracleConfigs[operator] = OracleConfig({
-            operator: operator,
-            jobId: jobId,
-            fee: fee,
-            isActive: true
-        });
-        
-        LinkTokenInterface link = LinkTokenInterface(_chainlinkTokenAddress());
-        require(link.approve(operator, type(uint256).max), "Failed to approve LINK");
-    }
 
-    function deactivateOracle(address operator) external onlyOwner {
-        require(oracleConfigs[operator].isActive, "Oracle not active");
-        oracleConfigs[operator].isActive = false;
-    }
-    
+
+
+ 
     function requestAIEvaluation(string[] memory cids) external returns (bytes32) {
         require(cids.length > 0, "CIDs array must not be empty");
         
@@ -129,13 +101,15 @@ contract ReputationAggregator is ChainlinkClient, Ownable {
         // Send requests to selected oracles
         for (uint256 i = 0; i < selectedOracles.length; i++) {
             address operator = selectedOracles[i];
-            OracleConfig memory config = oracleConfigs[operator];
-            require(config.isActive, "Selected oracle not configured");
+            
+            // Get oracle config from keeper
+            (bool isActive, , , bytes32 jobId, uint256 fee) = reputationKeeper.getOracleInfo(operator);
+            require(isActive, "Selected oracle not active");
             
             bytes32 oracleRequestId = sendOracleRequest(
-                config.operator,
-                config.jobId,
-                config.fee,
+                operator,
+                jobId,
+                fee,
                 cidsConcatenated,
                 aggregatorRequestId
             );
@@ -150,11 +124,9 @@ contract ReputationAggregator is ChainlinkClient, Ownable {
         return aggregatorRequestId;
     }
     
-    function fulfill(
-        bytes32 _requestId,
-        uint256[] memory likelihoods,
-        string memory justificationCID
-    ) public recordChainlinkFulfillment(_requestId) {
+    // Rest of the functions remain the same...
+    function fulfill(bytes32 _requestId, uint256[] memory likelihoods, string memory justificationCID) public recordChainlinkFulfillment(_requestId) {
+        // Existing fulfill implementation...
         require(likelihoods.length > 0, "Likelihoods array must not be empty");
         
         bytes32 aggregatorRequestId = requestIdToAggregatorId[_requestId];
@@ -165,7 +137,6 @@ contract ReputationAggregator is ChainlinkClient, Ownable {
         require(aggEval.requestIds[_requestId], "Invalid request ID");
         require(!aggEval.respondedOracles[msg.sender], "Oracle already responded");
         
-        // Store response
         Response memory newResponse = Response({
             likelihoods: likelihoods,
             justificationCID: justificationCID,
@@ -181,11 +152,25 @@ contract ReputationAggregator is ChainlinkClient, Ownable {
         
         emit OracleResponseReceived(aggregatorRequestId, _requestId);
         
-        // Check if we have enough responses or if timeout has passed
         if (aggEval.responseCount >= aggEval.requiredResponses) {
             finalizeAggregation(aggregatorRequestId);
         }
     }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
     function calculateDistance(uint256[] memory a, uint256[] memory b) internal pure returns (uint256) {
         require(a.length == b.length, "Arrays must be same length");
@@ -199,6 +184,21 @@ contract ReputationAggregator is ChainlinkClient, Ownable {
         }
         return sumSquares;
     }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
     function findBestCluster(Response[] memory responses) internal pure returns (uint256[] memory) {
         require(responses.length >= 2, "Need at least 2 responses");
@@ -377,28 +377,33 @@ function toHexString(uint256 value) internal pure returns (string memory) {
         );
     }
 
+
+
+
+
     function getContractConfig() public view returns (
         address oracleAddr,
         address linkAddr,
         bytes32 jobid,
         uint256 fee
     ) {
-        address firstOracle;
-        for (uint256 i = 0; i < 20; i++) {
-            address candidate = address(uint160(i));
-            if (oracleConfigs[candidate].isActive) {
-                firstOracle = candidate;
-                break;
-            }
-        }
-        require(firstOracle != address(0), "No active oracle found");
+        // Get first active oracle from reputation keeper
+        address[] memory oracles = reputationKeeper.selectOracles(1);
+        require(oracles.length > 0, "No active oracle found");
+        
+        (bool isActive, , , bytes32 jobId, uint256 fee_) = reputationKeeper.getOracleInfo(oracles[0]);
+        require(isActive, "Selected oracle not active");
+        
         return (
-            firstOracle,
+            oracles[0],
             _chainlinkTokenAddress(),
-            oracleConfigs[firstOracle].jobId,
-            oracleConfigs[firstOracle].fee
+            jobId,
+            fee_
         );
     }
+
+
+
 
     function withdrawLink(address payable _to, uint256 _amount) external onlyOwner {
         require(_to != address(0), "Invalid recipient address");

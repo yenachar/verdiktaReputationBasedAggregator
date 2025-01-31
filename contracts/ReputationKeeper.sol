@@ -9,6 +9,8 @@ contract ReputationKeeper is Ownable {
         int256 score;          // Actual score, can be negative
         uint256 stakeAmount;   // Amount of VDKA tokens staked
         bool isActive;         // Whether oracle is currently active
+        bytes32 jobId;         // Chainlink job ID
+        uint256 fee;          // LINK fee
         mapping(address => bool) approvedContracts;  // Contracts approved to use this oracle
     }
     
@@ -24,7 +26,7 @@ contract ReputationKeeper is Ownable {
     uint256 public constant MAX_SCORE_FOR_SELECTION = 100;
     uint256 public constant MIN_SCORE_FOR_SELECTION = 1;
     
-    event OracleRegistered(address indexed oracle);
+    event OracleRegistered(address indexed oracle, bytes32 jobId, uint256 fee);
     event OracleDeregistered(address indexed oracle);
     event ScoreUpdated(address indexed oracle, int256 newScore);
     event ContractApproved(address indexed contractAddress);
@@ -34,8 +36,9 @@ contract ReputationKeeper is Ownable {
         verdiktaToken = VerdiktaToken(_verdiktaToken);
     }
     
-    function registerOracle(address oracle) external {
+    function registerOracle(address oracle, bytes32 jobId, uint256 fee) external {
         require(!oracles[oracle].isActive, "Oracle already registered");
+        require(fee > 0, "Fee must be greater than 0");
         
         // Transfer VDKA tokens from sender to this contract
         verdiktaToken.transferFrom(msg.sender, address(this), STAKE_REQUIREMENT);
@@ -43,8 +46,10 @@ contract ReputationKeeper is Ownable {
         oracles[oracle].stakeAmount = STAKE_REQUIREMENT;
         oracles[oracle].score = 0;
         oracles[oracle].isActive = true;
+        oracles[oracle].jobId = jobId;
+        oracles[oracle].fee = fee;
         
-        emit OracleRegistered(oracle);
+        emit OracleRegistered(oracle, jobId, fee);
     }
     
     function deregisterOracle(address oracle) external {
@@ -58,6 +63,23 @@ contract ReputationKeeper is Ownable {
         oracles[oracle].isActive = false;
         
         emit OracleDeregistered(oracle);
+    }
+
+    function getOracleInfo(address oracle) external view returns (
+        bool isActive,
+        int256 score,
+        uint256 stakeAmount,
+        bytes32 jobId,
+        uint256 fee
+    ) {
+        OracleInfo storage info = oracles[oracle];
+        return (
+            info.isActive,
+            info.score,
+            info.stakeAmount,
+            info.jobId,
+            info.fee
+        );
     }
     
     function approveContract(address contractAddress) external onlyOwner {
@@ -87,57 +109,51 @@ contract ReputationKeeper is Ownable {
         emit ScoreUpdated(oracle, oracles[oracle].score);
     }
     
-// Create a view function to just select oracles
-function selectOracles(uint256 count) external view returns (address[] memory) {
-    require(approvedContracts[msg.sender].isApproved, "Not approved to select oracles");
-    
-    // First, count active oracles and calculate total weight
-    uint256 totalWeight = 0;
-    uint256 activeCount = 0;
-    address[] memory activeOracles = new address[](count);
-    uint256[] memory weights = new uint256[](count);
-    
-    for (uint256 i = 0; i < count; i++) {
-        // Use block hash and index for randomness
-        uint256 seed = uint256(keccak256(abi.encodePacked(block.timestamp, block.prevrandao, i)));
-        address oracle = address(uint160(seed));
+    function selectOracles(uint256 count) external view returns (address[] memory) {
+        require(approvedContracts[msg.sender].isApproved, "Not approved to select oracles");
         
-        if (oracles[oracle].isActive) {
-            uint256 weight = getSelectionScore(oracle);
-            activeOracles[activeCount] = oracle;
-            weights[activeCount] = weight;
-            totalWeight += weight;
-            activeCount++;
-        }
-    }
-    
-    require(activeCount >= count, "Not enough active oracles");
-    
-    // Select oracles based on weighted probability
-    address[] memory selectedOracles = new address[](count);
-    for (uint256 i = 0; i < count; i++) {
-        uint256 selection = uint256(keccak256(abi.encodePacked(block.timestamp, block.prevrandao, i))) % totalWeight;
-        uint256 sumWeight = 0;
+        uint256 totalWeight = 0;
+        uint256 activeCount = 0;
+        address[] memory activeOracles = new address[](count);
+        uint256[] memory weights = new uint256[](count);
         
-        for (uint256 j = 0; j < activeCount; j++) {
-            sumWeight += weights[j];
-            if (sumWeight > selection) {
-                selectedOracles[i] = activeOracles[j];
-                break;
+        for (uint256 i = 0; i < count; i++) {
+            uint256 seed = uint256(keccak256(abi.encodePacked(block.timestamp, block.prevrandao, i)));
+            address oracle = address(uint160(seed));
+            
+            if (oracles[oracle].isActive) {
+                uint256 weight = getSelectionScore(oracle);
+                activeOracles[activeCount] = oracle;
+                weights[activeCount] = weight;
+                totalWeight += weight;
+                activeCount++;
             }
         }
+        
+        require(activeCount >= count, "Not enough active oracles");
+        
+        address[] memory selectedOracles = new address[](count);
+        for (uint256 i = 0; i < count; i++) {
+            uint256 selection = uint256(keccak256(abi.encodePacked(block.timestamp, block.prevrandao, i))) % totalWeight;
+            uint256 sumWeight = 0;
+            
+            for (uint256 j = 0; j < activeCount; j++) {
+                sumWeight += weights[j];
+                if (sumWeight > selection) {
+                    selectedOracles[i] = activeOracles[j];
+                    break;
+                }
+            }
+        }
+        
+        return selectedOracles;
     }
-    
-    return selectedOracles;
-}
 
-// A new function to record the used oracles
-function recordUsedOracles(address[] calldata _oracleAddresses) external {
-    require(approvedContracts[msg.sender].isApproved, "Not approved to record oracles");
-    
-    for (uint256 i = 0; i < _oracleAddresses.length; i++) {
-        approvedContracts[msg.sender].usedOracles[_oracleAddresses[i]] = true;
+    function recordUsedOracles(address[] calldata _oracleAddresses) external {
+        require(approvedContracts[msg.sender].isApproved, "Not approved to record oracles");
+        
+        for (uint256 i = 0; i < _oracleAddresses.length; i++) {
+            approvedContracts[msg.sender].usedOracles[_oracleAddresses[i]] = true;
+        }
     }
-}
-
 }
