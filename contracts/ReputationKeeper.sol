@@ -10,7 +10,7 @@ contract ReputationKeeper is Ownable {
         uint256 stakeAmount;   // Amount of VDKA tokens staked
         bool isActive;         // Whether oracle is currently active
         bytes32 jobId;         // Chainlink job ID
-        uint256 fee;          // LINK fee
+        uint256 fee;           // LINK fee
         mapping(address => bool) approvedContracts;  // Contracts approved to use this oracle
     }
     
@@ -22,6 +22,10 @@ contract ReputationKeeper is Ownable {
     VerdiktaToken public verdiktaToken;
     mapping(address => OracleInfo) public oracles;
     mapping(address => ContractInfo) public approvedContracts;
+    
+    // NEW: Keep an array of all registered oracle addresses.
+    address[] public registeredOracles;
+    
     uint256 public constant STAKE_REQUIREMENT = 100 * 10**18;  // 100 VDKA tokens
     uint256 public constant MAX_SCORE_FOR_SELECTION = 100;
     uint256 public constant MIN_SCORE_FOR_SELECTION = 1;
@@ -49,6 +53,9 @@ contract ReputationKeeper is Ownable {
         oracles[oracle].jobId = jobId;
         oracles[oracle].fee = fee;
         
+        // Add this oracle to the registeredOracles list.
+        registeredOracles.push(oracle);
+        
         emit OracleRegistered(oracle, jobId, fee);
     }
     
@@ -62,6 +69,7 @@ contract ReputationKeeper is Ownable {
         oracles[oracle].stakeAmount = 0;
         oracles[oracle].isActive = false;
         
+        // (For minimal changes we leave the oracle in the registeredOracles array.)
         emit OracleDeregistered(oracle);
     }
 
@@ -109,46 +117,56 @@ contract ReputationKeeper is Ownable {
         emit ScoreUpdated(oracle, oracles[oracle].score);
     }
     
+    // NEW: Modified selectOracles function that always picks from registered oracles.
+    // It filters for active oracles and then selects `count` times (allowing duplicates).
     function selectOracles(uint256 count) external view returns (address[] memory) {
         require(approvedContracts[msg.sender].isApproved, "Not approved to select oracles");
         
-        uint256 totalWeight = 0;
+        // Build an array of active oracles.
         uint256 activeCount = 0;
-        address[] memory activeOracles = new address[](count);
-        uint256[] memory weights = new uint256[](count);
-        
-        for (uint256 i = 0; i < count; i++) {
-            uint256 seed = uint256(keccak256(abi.encodePacked(block.timestamp, block.prevrandao, i)));
-            address oracle = address(uint160(seed));
-            
-            if (oracles[oracle].isActive) {
-                uint256 weight = getSelectionScore(oracle);
-                activeOracles[activeCount] = oracle;
-                weights[activeCount] = weight;
-                totalWeight += weight;
+        for (uint256 i = 0; i < registeredOracles.length; i++) {
+            if (oracles[registeredOracles[i]].isActive) {
                 activeCount++;
             }
         }
+        require(activeCount > 0, "No active oracles available");
         
-        require(activeCount >= count, "No active oracles--at least one is needed");
-
-address[] memory selectedOracles = new address[](count);
-for (uint256 i = 0; i < count; i++) {
-    uint256 selection = uint256(keccak256(abi.encodePacked(block.timestamp, block.prevrandao, i))) % totalWeight;
-    uint256 sumWeight = 0;
-    for (uint256 j = 0; j < activeCount; j++) {
-        sumWeight += weights[j];
-        if (sumWeight > selection) {
-            selectedOracles[i] = activeOracles[j];
-            break;
+        address[] memory activeOracles = new address[](activeCount);
+        uint256 idx = 0;
+        for (uint256 i = 0; i < registeredOracles.length; i++) {
+            if (oracles[registeredOracles[i]].isActive) {
+                activeOracles[idx] = registeredOracles[i];
+                idx++;
+            }
         }
-    }
-    // If we somehow didn't select an oracle (shouldn't happen due to weights), use the first one
-    if (selectedOracles[i] == address(0)) {
-        selectedOracles[i] = activeOracles[0];
-    }
-}
-
+        
+        // Compute total weight based on each oracle's selection score.
+        uint256 totalWeight = 0;
+        uint256[] memory weights = new uint256[](activeCount);
+        for (uint256 i = 0; i < activeCount; i++) {
+            weights[i] = getSelectionScore(activeOracles[i]);
+            totalWeight += weights[i];
+        }
+        
+        // Now select `count` oracles (allowing duplicates) via weighted random selection.
+        address[] memory selectedOracles = new address[](count);
+        for (uint256 i = 0; i < count; i++) {
+            uint256 seed = uint256(keccak256(abi.encodePacked(block.timestamp, block.prevrandao, i)));
+            uint256 selection = seed % totalWeight;
+            uint256 sum = 0;
+            for (uint256 j = 0; j < activeCount; j++) {
+                sum += weights[j];
+                if (sum > selection) {
+                    selectedOracles[i] = activeOracles[j];
+                    break;
+                }
+            }
+            // Fallback (should never happen): use the first active oracle.
+            if (selectedOracles[i] == address(0)) {
+                selectedOracles[i] = activeOracles[0];
+            }
+        }
+        
         return selectedOracles;
     }
 
@@ -160,3 +178,4 @@ for (uint256 i = 0; i < count; i++) {
         }
     }
 }
+
