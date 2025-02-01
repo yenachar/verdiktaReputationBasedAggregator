@@ -55,6 +55,28 @@ module.exports = async function(callback) {
     console.log('\n=== ReputationAggregator Information ===');
     const aggBalance = await web3.eth.getBalance(aggregator.address);
     const aggOwner = await aggregator.owner();
+
+
+    // Get LINK balance
+    try {
+        const contractConfig = await aggregator.getContractConfig();
+        const linkTokenAddress = contractConfig.linkAddr;
+        const LinkToken = new web3.eth.Contract([
+            {
+                "constant": true,
+                "inputs": [{"name": "owner", "type": "address"}],
+                "name": "balanceOf",
+                "outputs": [{"name": "", "type": "uint256"}],
+                "type": "function"
+            }
+        ], linkTokenAddress);
+        
+        const linkBalance = await LinkToken.methods.balanceOf(aggregator.address).call();
+        console.log(`LINK Balance: ${web3.utils.fromWei(linkBalance, 'ether')} LINK`);
+    } catch (error) {
+        console.log('Could not fetch LINK balance:', error.message);
+    }
+
     
     // Get configuration parameters
     const oraclesToPoll = await aggregator.oraclesToPoll();
