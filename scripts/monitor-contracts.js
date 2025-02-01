@@ -51,7 +51,23 @@ module.exports = async function(callback) {
     console.log(`Address: ${keeper.address}`);
     console.log(`Contract Balance: ${web3.utils.fromWei(keeperBalance, 'ether')} ETH`);
     console.log(`Owner: ${keeperOwner}`);
-    
+   
+// set address explicitly for checking
+const oracleAddress = "0x1f3829ca4Bce27ECbB55CAA8b0F8B51E4ba2cCF6";
+console.log(`\n=== Oracle Status for ${oracleAddress} ===`);
+
+// Call the getOracleInfo method on the keeper contract.
+// The function returns: isActive, score, stakeAmount, jobId, fee.
+const oracleInfo = await keeper.getOracleInfo(oracleAddress);
+
+// The returned object properties depend on your web3 version and contract ABI,
+// but typically you can access them like this:
+console.log(`Active: ${oracleInfo.isActive}`);
+console.log(`Score: ${oracleInfo.score.toString()}`);
+console.log(`Stake Amount: ${oracleInfo.stakeAmount.toString()}`);
+console.log(`Job ID: ${oracleInfo.jobId}`);
+console.log(`Fee: ${oracleInfo.fee.toString()}`);
+
     console.log('\n=== ReputationAggregator Information ===');
     const aggBalance = await web3.eth.getBalance(aggregator.address);
     const aggOwner = await aggregator.owner();
