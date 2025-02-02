@@ -1,6 +1,8 @@
 // scripts/register-oracle.js
 const VerdiktaToken = artifacts.require("VerdiktaToken");
 const ReputationKeeper = artifacts.require("ReputationKeeper");
+const ReputationAggregator = artifacts.require("ReputationAggregator");
+const LinkTokenInterface = artifacts.require("LinkTokenInterface");
 
 module.exports = async function(callback) {
   try {
@@ -18,6 +20,21 @@ module.exports = async function(callback) {
     // Get deployed contracts
     const verdikta = await VerdiktaToken.deployed();
     const keeper = await ReputationKeeper.deployed();
+
+    // Check if oracle is already registered
+    const oracleInfo = await keeper.getOracleInfo(oracleAddress);
+    console.log('Oracle registration status:', {
+        isActive: oracleInfo.isActive,
+        score: oracleInfo.score.toString(),
+        stakeAmount: oracleInfo.stakeAmount.toString(),
+        jobId: web3.utils.hexToAscii(oracleInfo.jobId),
+        fee: oracleInfo.fee.toString()
+    });
+
+
+    if (oracleInfo.isActive) {
+        console.log('Oracle is already registered. Proceeding with LINK approval...');
+    } else {
 
     // Log addresses for verification
     console.log('Using contracts:');
@@ -48,6 +65,7 @@ module.exports = async function(callback) {
         amount: vdkaStake
     });
     await verdikta.approve(keeper.address, vdkaStake, { from: owner });
+    // await verdikta.approve(keeper.address, vdkaStake, { from: oracleAddress });
     console.log('VDKA spend approved');
 
     // Register oracle
@@ -61,6 +79,21 @@ module.exports = async function(callback) {
     });
     await keeper.registerOracle(oracleAddress, jobId, linkFee, { from: owner });
     console.log('Oracle registered successfully');
+    }
+
+    // Set up LINK approval for the aggregator
+    console.log('Setting up LINK token approval...');
+    const aggregator = await ReputationAggregator.deployed();
+    const config = await aggregator.getContractConfig();
+    const linkTokenAddress = config.linkAddr;
+    const LinkToken = artifacts.require("LinkTokenInterface");
+    const linkToken = await LinkToken.at(linkTokenAddress);
+    
+    // Approve a large amount of LINK
+    const maxLinkApproval = "115792089237316195423570985008687907853269984665640564039457584007913129639935"; // max uint256
+    console.log('Approving LINK token spending for aggregator...');
+    await linkToken.approve(aggregator.address, maxLinkApproval, { from: owner });
+    console.log('LINK token spending approved');
 
     callback();
   } catch (error) {

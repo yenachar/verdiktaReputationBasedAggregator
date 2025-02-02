@@ -18,8 +18,17 @@ module.exports = async function(callback) {
     console.log('Keeper:', keeper.address);
     console.log('Aggregator:', aggregator.address);
 
+    // Set ReputationKeeper in VerdiktaToken
+    console.log('Setting ReputationKeeper in VerdiktaToken...');
+    await verdikta.setReputationKeeper(keeper.address);
+    console.log('ReputationKeeper set in VerdiktaToken');
+	               
     // Configure aggregator
     console.log('Configuring aggregator...');
+    // oraclesToPoll: 4 (poll four times)
+    // requiredResponses: 3 (need three responses)
+    // clusterSize: 2 (cluster size of two)
+    // timeout: 300 seconds (5 minutes)
     await aggregator.setConfig(4, 3, 2, 300);
     console.log('Aggregator configured');
 
