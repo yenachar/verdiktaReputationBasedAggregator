@@ -44,6 +44,8 @@ contract ReputationAggregator is ChainlinkClient, Ownable {
     event OracleResponseReceived(bytes32 indexed aggregatorRequestId, bytes32 indexed oracleRequestId);
     event AggregationCompleted(bytes32 indexed aggregatorRequestId, uint256[] aggregatedLikelihoods);
     event OracleScored(address indexed operator, int8 score);
+    event Debug(string message);
+    event DebugUint(string message, uint256 value);
     
     constructor(
         address _link,
@@ -72,10 +74,14 @@ contract ReputationAggregator is ChainlinkClient, Ownable {
     }
     
     function requestAIEvaluation(string[] memory cids) external returns (bytes32) {
+
+        emit Debug("Entered requestAIEvaluation");
         require(cids.length > 0, "CIDs array must not be empty");
+        emit DebugUint("cids.length", cids.length);
         
         // Get (possibly duplicate) oracle addresses from ReputationKeeper.
         address[] memory selectedOracles = reputationKeeper.selectOracles(oraclesToPoll);
+        emit DebugUint("selectedOracles.length", selectedOracles.length);
 
         // Record the selected oracles.
         reputationKeeper.recordUsedOracles(selectedOracles);
@@ -122,6 +128,10 @@ contract ReputationAggregator is ChainlinkClient, Ownable {
     
     // Modified fulfill: removed the check that prevents duplicate responses.
     function fulfill(bytes32 _requestId, uint256[] memory likelihoods, string memory justificationCID) public recordChainlinkFulfillment(_requestId) {
+
+        emit Debug("Entered fulfill");
+        emit DebugUint("likelihoods.length", likelihoods.length);
+
         require(likelihoods.length > 0, "Likelihoods array must not be empty");
         
         bytes32 aggregatorRequestId = requestIdToAggregatorId[_requestId];
@@ -131,6 +141,9 @@ contract ReputationAggregator is ChainlinkClient, Ownable {
         require(!aggEval.isComplete, "Aggregation already completed");
         require(aggEval.requestIds[_requestId], "Invalid request ID");
         // Removed: duplicate-response check is no longer performed.
+
+        // Log state before adding the response.
+        emit DebugUint("aggEval.responseCount before", aggEval.responseCount);
         
         Response memory newResponse = Response({
             likelihoods: likelihoods,
@@ -145,6 +158,7 @@ contract ReputationAggregator is ChainlinkClient, Ownable {
         aggEval.responseCount++;
         // Removed: marking oracle as already responded.
         
+        emit DebugUint("aggEval.responseCount after", aggEval.responseCount);
         emit OracleResponseReceived(aggregatorRequestId, _requestId);
         
         if (aggEval.responseCount >= aggEval.requiredResponses) {
@@ -251,6 +265,8 @@ contract ReputationAggregator is ChainlinkClient, Ownable {
         string memory cidsConcatenated,
         bytes32 aggregatorRequestId
     ) internal returns (bytes32) {
+        emit Debug("Preparing oracle request");
+        emit DebugUint("fee", fee);
         Chainlink.Request memory request = _buildOperatorRequest(jobId, this.fulfill.selector);
         request._add("cid", cidsConcatenated);
         request._add("aggregatorRequestId", toHexString(uint256(aggregatorRequestId)));

@@ -81,6 +81,7 @@ module.exports = async function(callback) {
     console.log('Oracle registered successfully');
     }
 
+
     // Set up LINK approval for the aggregator
     console.log('Setting up LINK token approval...');
     const aggregator = await ReputationAggregator.deployed();
@@ -88,12 +89,53 @@ module.exports = async function(callback) {
     const linkTokenAddress = config.linkAddr;
     const LinkToken = artifacts.require("LinkTokenInterface");
     const linkToken = await LinkToken.at(linkTokenAddress);
+
+
+console.log('Aggregator config:', {
+    oracleAddr: config.oracleAddr,
+    linkAddr: config.linkAddr,
+    jobId: config.jobid,
+    fee: config.fee.toString()
+});
+
+// Check if the oracle address matches
+if (config.oracleAddr.toLowerCase() !== oracleAddress.toLowerCase()) {
+    console.warn('Warning: Aggregator oracle address does not match registered oracle');
+}
+
+// Check LINK balance and approval
+const aggregatorBalance = await linkToken.balanceOf(aggregator.address);
+console.log('Aggregator LINK balance:', aggregatorBalance.toString());
+
+    // Check current LINK balances and allowances
+    const linkBalance = await linkToken.balanceOf(owner);
+    const currentAllowance = await linkToken.allowance(owner, aggregator.address);
+    console.log('LINK status:', {
+        balance: linkBalance.toString(),
+        currentAllowance: currentAllowance.toString()
+    });
     
     // Approve a large amount of LINK
     const maxLinkApproval = "115792089237316195423570985008687907853269984665640564039457584007913129639935"; // max uint256
-    console.log('Approving LINK token spending for aggregator...');
+    console.log('Approving LINK token spending...');
+
+    // Approve for oracle
+    await linkToken.approve(oracleAddress, maxLinkApproval, { from: owner });
+    console.log('LINK spending approved for oracle');
+    
+    // Approve for aggregator
     await linkToken.approve(aggregator.address, maxLinkApproval, { from: owner });
-    console.log('LINK token spending approved');
+    console.log('LINK spending approved for aggregator');
+
+    // Verify new allowances
+    const newOracleAllowance = await linkToken.allowance(owner, oracleAddress);
+    const newAggregatorAllowance = await linkToken.allowance(owner, aggregator.address);
+    console.log('New allowances:', {
+        oracleAllowance: newOracleAllowance.toString(),
+        aggregatorAllowance: newAggregatorAllowance.toString()
+    });
+
+    console.log('Setup completed successfully');
 
     callback();
   } catch (error) {
