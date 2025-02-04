@@ -42,7 +42,9 @@ module.exports = async function(callback) {
     console.log('ReputationKeeper:', keeper.address);
 
     // Oracle details
-    const jobId = web3.utils.fromAscii("38f19572c51041baa5f2dea284614590").padEnd(66, '0');
+    // const jobId = web3.utils.fromAscii("38f19572c51041baa5f2dea284614590").padEnd(66, '0');
+    const jobIdString = "38f19572c51041baa5f2dea284614590";
+    const jobId = web3.utils.fromAscii(jobIdString); 
     const linkFee = "50000000000000000"; // 0.05 LINK (18 decimals)
     const vdkaStake = "100000000000000000000"; // 100 VDKA (18 decimals)
 
