@@ -14,7 +14,7 @@ module.exports = async function(callback) {
     console.log('Using owner account:', owner);
 
     // Oracle contract address
-    const oracleAddress = "0x1f3829ca4Bce27ECbB55CAA8b0F8B51E4ba2cCF6";
+    const oracleAddress = "0xD67D6508D4E5611cd6a463Dd0969Fa153Be91101";
     console.log('Registering oracle contract:', oracleAddress);
 	  
     // Get deployed contracts
