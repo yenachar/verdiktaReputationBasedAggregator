@@ -1,5 +1,5 @@
-// WIthdraws LINK from the Ranking Aggregator. To run it, enter the aggregator contract address and withdraw address as follows:
-// truffle exec scripts/withdraw-link.js -a 0xbabE69DdF8CBbe63fEDB6f49904efB35522667Af -d 0xYourDepositAddress --network base_sepolia
+// Withdraws LINK from the Ranking Aggregator. To run it, enter the aggregator contract address and withdraw address as follows:
+// truffle exec scripts/withdraw-link-from-aggregator.js -a 0xbabE69DdF8CBbe63fEDB6f49904efB35522667Af -d 0xYourDepositAddress --network base_sepolia
 //
 const yargs = require('yargs/yargs');
 const { hideBin } = require('yargs/helpers');
