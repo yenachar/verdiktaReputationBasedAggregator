@@ -25,8 +25,8 @@ module.exports = async function(callback) {
     const oracleInfo = await keeper.getOracleInfo(oracleAddress);
     console.log('Oracle registration status:', {
         isActive: oracleInfo.isActive,
-        score: oracleInfo.score.toString(),
-        stakeAmount: oracleInfo.stakeAmount.toString(),
+        qualityScore: oracleInfo.qualityScore.toString(),
+        timelinessScore: oracleInfo.timelinessScore.toString(),
         jobId: web3.utils.hexToAscii(oracleInfo.jobId),
         fee: oracleInfo.fee.toString()
     });

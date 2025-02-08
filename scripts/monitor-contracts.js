@@ -63,8 +63,8 @@ const oracleInfo = await keeper.getOracleInfo(oracleAddress);
 // The returned object properties depend on your web3 version and contract ABI,
 // but typically you can access them like this:
 console.log(`Active: ${oracleInfo.isActive}`);
-console.log(`Score: ${oracleInfo.score.toString()}`);
-console.log(`Stake Amount: ${oracleInfo.stakeAmount.toString()}`);
+console.log(`Quality Score: ${oracleInfo.qualityScore.toString()}`);
+console.log(`Timeliness Score: ${oracleInfo.timelinessScore.toString()}`);
 console.log(`Job ID: ${oracleInfo.jobId}`);
 console.log(`Fee: ${oracleInfo.fee.toString()}`);
 
@@ -98,7 +98,7 @@ console.log(`Fee: ${oracleInfo.fee.toString()}`);
     const oraclesToPoll = await aggregator.oraclesToPoll();
     const requiredResponses = await aggregator.requiredResponses();
     const clusterSize = await aggregator.clusterSize();
-    const responseTimeout = await aggregator.responseTimeout();
+    const responseTimeout = await aggregator.responseTimeoutSeconds();
     
     // Get Chainlink configuration
     try {

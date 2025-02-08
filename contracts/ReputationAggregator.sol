@@ -7,8 +7,8 @@ import "./ReputationKeeper.sol";
 
 /**
  * @title ReputationAggregator
- * @notice A new aggregator that has the same external ABI as your old aggregator,
- *         but uses a ReputationKeeper under the hood for multi-oracle logic.
+ * @notice An aggregator that 
+ uses a ReputationKeeper under the hood for multi-oracle logic.
  *         The constructor is unchanged from the new aggregator code you gave.
  */
 contract ReputationAggregator is ChainlinkClient, Ownable {
@@ -21,7 +21,8 @@ contract ReputationAggregator is ChainlinkClient, Ownable {
     uint256 public oraclesToPoll;       // e.g. number of oracles to poll
     uint256 public requiredResponses;   // how many responses needed to finalize
     uint256 public clusterSize;         // used for cluster-based or outlier logic
-    uint256 public responseTimeout;     // optional future usage
+    uint256 public responseTimeoutSeconds = 300; // 5 minutes default
+    uint256 public alpha = 500;         // Reputation weight. Default to 500 (midpoint, 0 to 1000)
 
     // ------------------------------------------------------------------------
     // Storing a single “Chainlink oracle” address & job info
@@ -37,7 +38,7 @@ contract ReputationAggregator is ChainlinkClient, Ownable {
     ReputationKeeper public reputationKeeper;
 
     // ------------------------------------------------------------------------
-    // OLD aggregator’s “public interface” variables & events
+    // Aggregator’s “public interface” variables & events
     // (All needed so that App.js can call them or parse logs.)
     // ------------------------------------------------------------------------
 
@@ -86,7 +87,7 @@ contract ReputationAggregator is ChainlinkClient, Ownable {
     mapping(bytes32 => bytes32) public requestIdToAggregatorId;
 
     // ------------------------------------------------------------------------
-    // NEW aggregator constructor (unchanged from your new aggregator code)
+    // Aggregator constructor (unchanged from your new aggregator code)
     // ------------------------------------------------------------------------
     constructor(address _link, address _reputationKeeper) Ownable(msg.sender) {
         _setChainlinkToken(_link);
@@ -95,7 +96,25 @@ contract ReputationAggregator is ChainlinkClient, Ownable {
         oraclesToPoll = 4;
         requiredResponses = 3;
         clusterSize = 2;
-        responseTimeout = 5 minutes;
+        responseTimeoutSeconds = 5 minutes;
+    }
+
+
+    // ------------------------------------------------------------------------
+    // Get/set related to quality and timeliness scores
+    // ------------------------------------------------------------------------
+
+    function setResponseTimeout(uint256 _timeoutSeconds) external onlyOwner {
+        responseTimeoutSeconds = _timeoutSeconds;
+    }
+
+    function setAlpha(uint256 _alpha) external onlyOwner {
+        require(_alpha <= 1000, "Alpha must be between 0 and 1000");
+        alpha = _alpha;
+    }
+
+    function getAlpha() external view returns (uint256) {
+        return alpha;
     }
 
     // ------------------------------------------------------------------------
@@ -115,11 +134,11 @@ contract ReputationAggregator is ChainlinkClient, Ownable {
         oraclesToPoll = _oraclesToPoll;
         requiredResponses = _requiredResponses;
         clusterSize = _clusterSize;
-        responseTimeout = _responseTimeout;
+        responseTimeoutSeconds = _responseTimeout;
     }
 
     // ------------------------------------------------------------------------
-    // OLD aggregator function: setChainlinkToken(address)
+    // Aggregator function: setChainlinkToken(address)
     // We simply expose `_setChainlinkToken` from ChainlinkClient so your UI won't break.
     // ------------------------------------------------------------------------
     function setChainlinkToken(address _link) external onlyOwner {
@@ -147,7 +166,6 @@ contract ReputationAggregator is ChainlinkClient, Ownable {
     }
 
     // ------------------------------------------------------------------------
-    // OLD aggregator main function:
     //   requestAIEvaluation(string[] memory cids)
     // This also uses the new aggregator logic with multi-oracle selection.
     // ------------------------------------------------------------------------
@@ -155,13 +173,10 @@ contract ReputationAggregator is ChainlinkClient, Ownable {
         require(address(reputationKeeper) != address(0), "ReputationKeeper not set");
         require(cids.length > 0, "CIDs array must not be empty");
 
-        // Let ReputationKeeper pick oracles
-        address[] memory selectedOracles = reputationKeeper.selectOracles(oraclesToPoll);
-
-        // Record oracles for scoring
+        // Select oracles using current alpha value
+        address[] memory selectedOracles = reputationKeeper.selectOracles(oraclesToPoll, alpha);
         reputationKeeper.recordUsedOracles(selectedOracles);
 
-        // aggregator-level request ID
         string memory cidsConcatenated = concatenateCids(cids);
         bytes32 aggregatorRequestId = keccak256(abi.encodePacked(
             block.timestamp,
@@ -169,30 +184,26 @@ contract ReputationAggregator is ChainlinkClient, Ownable {
             cidsConcatenated
         ));
 
-        // Initialize the AggregatedEvaluation
         AggregatedEvaluation storage aggEval = aggregatedEvaluations[aggregatorRequestId];
         aggEval.expectedResponses = oraclesToPoll;
         aggEval.requiredResponses = requiredResponses;
         aggEval.clusterSize = clusterSize;
         aggEval.isComplete = false;
 
-        // Send requests to each oracle
         for (uint256 i = 0; i < selectedOracles.length; i++) {
             address operator = selectedOracles[i];
             (bool isActive, , , bytes32 jobId, uint256 fee) = reputationKeeper.getOracleInfo(operator);
             require(isActive, "Selected oracle not active");
 
-            // Build a unique operator-level request
             bytes32 operatorRequestId = _sendSingleOracleRequest(operator, jobId, fee, cidsConcatenated);
-
             requestIdToAggregatorId[operatorRequestId] = aggregatorRequestId;
             aggEval.requestIds[operatorRequestId] = true;
         }
 
-        // Emit the old aggregator event
         emit RequestAIEvaluation(aggregatorRequestId, cids);
         return aggregatorRequestId;
     }
+
 
     // ------------------------------------------------------------------------
     // HELPER: send a single Chainlink request, also emit “ChainlinkRequested”
@@ -256,60 +267,92 @@ contract ReputationAggregator is ChainlinkClient, Ownable {
     // ------------------------------------------------------------------------
     // finalizeAggregation: pick best cluster, average, and emit final event
     // ------------------------------------------------------------------------
-    function _finalizeAggregation(bytes32 aggregatorRequestId) internal {
-        AggregatedEvaluation storage aggEval = aggregatedEvaluations[aggregatorRequestId];
 
-        // cluster logic
-        uint256[] memory clusterIndices = _findBestCluster(aggEval.responses);
+    // _finalizeAggregation function to handle dual scoring
+function _finalizeAggregation(bytes32 aggregatorRequestId) internal {
+    AggregatedEvaluation storage aggEval = aggregatedEvaluations[aggregatorRequestId];
 
-        // aggregate
-        aggEval.aggregatedLikelihoods = new uint256[](aggEval.responses[0].likelihoods.length);
-        uint256 clusterCount = 0;
-
-        for (uint256 i = 0; i < aggEval.responses.length; i++) {
-            if (clusterIndices[i] == 1) {
-                // included
-                for (uint256 j = 0; j < aggEval.responses[i].likelihoods.length; j++) {
-                    aggEval.aggregatedLikelihoods[j] += aggEval.responses[i].likelihoods[j];
-                }
-                clusterCount++;
-                // Score oracle positively
-                reputationKeeper.updateScore(aggEval.responses[i].operator, 1);
-            } else {
-                // excluded
-                aggEval.responses[i].included = false;
-                // Score oracle negatively
-                reputationKeeper.updateScore(aggEval.responses[i].operator, -1);
-            }
+    // Find request timestamp (earliest response time as approximation)
+    uint256 requestTime = type(uint256).max;
+    for (uint256 i = 0; i < aggEval.responses.length; i++) {
+        if (aggEval.responses[i].timestamp < requestTime) {
+            requestTime = aggEval.responses[i].timestamp;
         }
-
-        // average
-        for (uint256 k = 0; k < aggEval.aggregatedLikelihoods.length; k++) {
-            aggEval.aggregatedLikelihoods[k] /= clusterCount;
-        }
-
-        aggEval.isComplete = true;
-
-        // Combine included justification CIDs for final event
-        string memory combinedCIDs = "";
-        bool first = true;
-        for (uint256 m = 0; m < aggEval.responses.length; m++) {
-            if (aggEval.responses[m].included) {
-                if (!first) {
-                    combinedCIDs = string(abi.encodePacked(combinedCIDs, ","));
-                }
-                combinedCIDs = string(abi.encodePacked(combinedCIDs, aggEval.responses[m].justificationCID));
-                first = false;
-            }
-        }
-
-        // old aggregator’s “FulfillAIEvaluation” event
-        emit FulfillAIEvaluation(aggregatorRequestId, aggEval.aggregatedLikelihoods, combinedCIDs);
     }
 
+    uint256[] memory clusterIndices = _findBestCluster(aggEval.responses);
+
+    aggEval.aggregatedLikelihoods = new uint256[](aggEval.responses[0].likelihoods.length);
+    uint256 clusterCount = 0;
+
+    for (uint256 i = 0; i < aggEval.responses.length; i++) {
+        bool isTimely = (aggEval.responses[i].timestamp - requestTime) <= responseTimeoutSeconds;
+
+        if (clusterIndices[i] == 1) {
+            // Include in aggregation
+            for (uint256 j = 0; j < aggEval.responses[i].likelihoods.length; j++) {
+                aggEval.aggregatedLikelihoods[j] += aggEval.responses[i].likelihoods[j];
+            }
+            clusterCount++;
+            // Quality: clustered = +1
+            // Timeliness: on time = +1, late = -1
+            reputationKeeper.updateScores(
+                aggEval.responses[i].operator,
+                int8(1),
+                isTimely ? int8(1) : int8(-1)
+            );
+        } else {
+            aggEval.responses[i].included = false;
+            // Quality: not clustered = -1
+            // Timeliness: on time = 0, late = -1
+            reputationKeeper.updateScores(
+                aggEval.responses[i].operator,
+                int8(-1),
+                isTimely ? int8(0) : int8(-1)
+            );
+        }
+    }
+
+    // Average the clustered responses
+    for (uint256 k = 0; k < aggEval.aggregatedLikelihoods.length; k++) {
+        aggEval.aggregatedLikelihoods[k] /= clusterCount;
+    }
+
+    aggEval.isComplete = true;
+
+    // Combine justification CIDs for included responses
+    string memory combinedCIDs = "";
+    bool first = true;
+    for (uint256 m = 0; m < aggEval.responses.length; m++) {
+        if (aggEval.responses[m].included) {
+            if (!first) {
+                combinedCIDs = string(abi.encodePacked(combinedCIDs, ","));
+            }
+            combinedCIDs = string(abi.encodePacked(combinedCIDs, aggEval.responses[m].justificationCID));
+            first = false;
+        }
+    }
+
+    emit FulfillAIEvaluation(aggregatorRequestId, aggEval.aggregatedLikelihoods, combinedCIDs);
+}
+
+
+
+
     // ------------------------------------------------------------------------
-    // Example cluster logic: pick the pair with smallest distance
-    // (If you want something that uses "clusterSize" more flexibly, you can expand it.)
+    // selectOracles: pass the alpha parameter
+    // ------------------------------------------------------------------------
+function selectOracles(uint256 count) external view returns (address[] memory) {
+    require(address(reputationKeeper) != address(0), "ReputationKeeper not set");
+    require(count > 0, "Count must be greater than 0");
+    
+    // Pass the alpha parameter to ReputationKeeper's selectOracles
+    address[] memory selectedOracles = reputationKeeper.selectOracles(count, alpha);
+    return selectedOracles;
+}
+
+    // ------------------------------------------------------------------------
+    // Cluster logic: pick the pair with smallest distance
     // ------------------------------------------------------------------------
     function _findBestCluster(Response[] memory responses) internal pure returns (uint256[] memory) {
         require(responses.length >= 2, "Need at least 2 responses");
