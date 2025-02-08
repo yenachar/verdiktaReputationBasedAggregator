@@ -85,8 +85,8 @@ module.exports = async function(callback) {
             console.log(`\nOracle ${index + 1}:`);
             console.log(`Address: ${oracle.address}`);
             console.log(`Active: ${oracle.info.isActive}`);
-            console.log(`Score: ${oracle.info.score.toString()}`);
-            console.log(`Stake: ${web3.utils.fromWei(oracle.info.stakeAmount.toString(), 'ether')} VDKA`);
+            console.log(`Quality Score: ${oracle.info.qualityScore.toString()}`);
+            console.log(`Timeliness Score: ${oracle.info.timelinessScore.toString()}`);
             console.log(`Job ID: ${oracle.info.jobId}`);
             console.log(`Fee: ${oracle.info.fee.toString()}`);
         });
