@@ -285,33 +285,34 @@ function _finalizeAggregation(bytes32 aggregatorRequestId) internal {
     aggEval.aggregatedLikelihoods = new uint256[](aggEval.responses[0].likelihoods.length);
     uint256 clusterCount = 0;
 
-    for (uint256 i = 0; i < aggEval.responses.length; i++) {
-        bool isTimely = (aggEval.responses[i].timestamp - requestTime) <= responseTimeoutSeconds;
-
-        if (clusterIndices[i] == 1) {
-            // Include in aggregation
-            for (uint256 j = 0; j < aggEval.responses[i].likelihoods.length; j++) {
-                aggEval.aggregatedLikelihoods[j] += aggEval.responses[i].likelihoods[j];
-            }
-            clusterCount++;
-            // Quality: clustered = +1
-            // Timeliness: on time = +1, late = -1
-            reputationKeeper.updateScores(
-                aggEval.responses[i].operator,
-                int8(1),
-                isTimely ? int8(1) : int8(-1)
-            );
-        } else {
-            aggEval.responses[i].included = false;
-            // Quality: not clustered = -1
-            // Timeliness: on time = 0, late = -1
-            reputationKeeper.updateScores(
-                aggEval.responses[i].operator,
-                int8(-1),
-                isTimely ? int8(0) : int8(-1)
-            );
+for (uint256 i = 0; i < aggEval.responses.length; i++) {
+    bool isTimely = (aggEval.responses[i].timestamp - requestTime) <= responseTimeoutSeconds;
+    
+    if (clusterIndices[i] == 1) {
+        // Include in aggregation
+        for (uint256 j = 0; j < aggEval.responses[i].likelihoods.length; j++) {
+            aggEval.aggregatedLikelihoods[j] += aggEval.responses[i].likelihoods[j];
         }
+        clusterCount++;
+        // Quality: clustered = +1
+        // Timeliness: clustered = +1 (regardless of time)
+        reputationKeeper.updateScores(
+            aggEval.responses[i].operator,
+            int8(1),  // quality +1 for clustering
+            int8(1)   // timeliness +1 for clustering
+        );
+    } else {
+        aggEval.responses[i].included = false;
+        // Quality: -1 if responded in time, 0 if not
+        // Timeliness: 0 if responded in time, -1 if not
+        reputationKeeper.updateScores(
+            aggEval.responses[i].operator,
+            isTimely ? int8(-1) : int8(0),  // quality -1 if timely, 0 if not
+            isTimely ? int8(0) : int8(-1)   // timeliness 0 if timely, -1 if not
+        );
     }
+}
+
 
     // Average the clustered responses
     for (uint256 k = 0; k < aggEval.aggregatedLikelihoods.length; k++) {
