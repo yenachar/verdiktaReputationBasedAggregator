@@ -101,6 +101,7 @@ module.exports = {
 	          gasPrice: 1000000000,    // Gas price (1 Gwei)
 	          confirmations: 2,        // # of confirmations to wait between deployments
 	          timeoutBlocks: 400,      // # of blocks before a deployment times out
+	          networkCheckTimeout: 30000, // Milliseconds to wait for network to start (1/2 minute)
 	          skipDryRun: true         // Skip dry run before migrations
 	        },
     //
