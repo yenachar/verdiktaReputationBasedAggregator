@@ -7,28 +7,22 @@ import "./ReputationKeeper.sol";
 
 /**
  * @title ReputationAggregator
- * @notice An aggregator that 
- uses a ReputationKeeper under the hood for multi-oracle logic.
- *         The constructor is unchanged from the new aggregator code you gave.
+ * @notice An aggregator that uses a ReputationKeeper under the hood for multi‐oracle logic.
  */
 contract ReputationAggregator is ChainlinkClient, Ownable {
     using Chainlink for Chainlink.Request;
 
     // ------------------------------------------------------------------------
-    // New aggregator logic configuration
-    // (These are settable via setConfig and used in multi-oracle logic.)
+    // Configuration
     // ------------------------------------------------------------------------
-    uint256 public oraclesToPoll;       // e.g. number of oracles to poll
-    uint256 public requiredResponses;   // how many responses needed to finalize
-    uint256 public clusterSize;         // used for cluster-based or outlier logic
-    uint256 public responseTimeoutSeconds = 300; // 5 minutes default
-    uint256 public alpha = 500;         // Reputation weight. Default to 500 (midpoint, 0 to 1000)
+    uint256 public oraclesToPoll;       // total oracles to poll (M)
+    uint256 public requiredResponses;   // first N responses to consider (N)
+    uint256 public clusterSize;         // cluster size (P)
+    uint256 public responseTimeoutSeconds = 300; // (not used for scoring)
+    uint256 public alpha = 500;         // Reputation weight
 
     // ------------------------------------------------------------------------
-    // Storing a single “Chainlink oracle” address & job info
-    // because the old front-end calls setChainlinkOracle(...) & getContractConfig().
-    // You can still rely on multiple oracles via ReputationKeeper, but we keep
-    // these fields for front-end compatibility.
+    // Single “Chainlink oracle” info for front-end compatibility
     // ------------------------------------------------------------------------
     address public chainlinkOracle;
     bytes32 public chainlinkJobId;
@@ -38,35 +32,25 @@ contract ReputationAggregator is ChainlinkClient, Ownable {
     ReputationKeeper public reputationKeeper;
 
     // ------------------------------------------------------------------------
-    // Aggregator’s “public interface” variables & events
-    // (All needed so that App.js can call them or parse logs.)
+    // Public events
     // ------------------------------------------------------------------------
-
-    // 1) The front end expects these events:
     event RequestAIEvaluation(bytes32 indexed requestId, string[] cids);
     event FulfillAIEvaluation(bytes32 indexed requestId, uint256[] likelihoods, string justificationCID);
-    // event ChainlinkRequested(bytes32 indexed id);
-    // event ChainlinkFulfilled(bytes32 indexed id);
     event Debug1(address linkToken, address oracle, uint256 fee, uint256 balance, bytes32 jobId);
 
-    // 2) The front end calls these public functions:
-    //   - requestAIEvaluation(string[])
-    //   - getEvaluation(bytes32)
-    //   - evaluations(bytes32)
-    //   - setChainlinkToken(address)
-    //   - setChainlinkOracle(address)
-    //   - getContractConfig()
-
     // ------------------------------------------------------------------------
-    // Response & Aggregation Structures
+    // Structures
     // ------------------------------------------------------------------------
+    // Response now includes a "selected" flag (if it was among the first N responses)
+    // and a "pollIndex" that indicates the poll slot for which this response was received.
     struct Response {
         uint256[] likelihoods;
         string justificationCID;
-        bytes32 requestId;   // operator-level ID
-        bool included;
+        bytes32 requestId;
+        bool selected;       // true if among the first N responses
         uint256 timestamp;
         address operator;
+        uint256 pollIndex;   // which poll slot (0..M-1) this response corresponds to
     }
 
     struct AggregatedEvaluation {
@@ -77,33 +61,33 @@ contract ReputationAggregator is ChainlinkClient, Ownable {
         uint256 requiredResponses;
         uint256 clusterSize;
         bool isComplete;
-        mapping(bytes32 => bool) requestIds;  // track operator-level request IDs
+        mapping(bytes32 => bool) requestIds;  // track valid request IDs
+        address[] polledOracles; // one entry per poll slot (duplicates allowed)
     }
 
-    // aggregator-level (requestId) -> AggregatedEvaluation
+    // Mapping from aggregator-level requestId to its evaluation.
     mapping(bytes32 => AggregatedEvaluation) public aggregatedEvaluations;
-
-    // operator-level requestId -> aggregator-level requestId
+    // Mapping from a Chainlink operator request id to aggregator request id.
     mapping(bytes32 => bytes32) public requestIdToAggregatorId;
+    // Mapping from a Chainlink operator request id to the poll slot index.
+    mapping(bytes32 => uint256) public requestIdToPollIndex;
 
     // ------------------------------------------------------------------------
-    // Aggregator constructor (unchanged from your new aggregator code)
+    // Constructor
     // ------------------------------------------------------------------------
     constructor(address _link, address _reputationKeeper) Ownable(msg.sender) {
         _setChainlinkToken(_link);
         reputationKeeper = ReputationKeeper(_reputationKeeper);
-        // Default config if desired
+        // Default configuration values:
         oraclesToPoll = 4;
         requiredResponses = 3;
         clusterSize = 2;
         responseTimeoutSeconds = 5 minutes;
     }
 
-
     // ------------------------------------------------------------------------
-    // Get/set related to quality and timeliness scores
+    // Setters and getters for configuration
     // ------------------------------------------------------------------------
-
     function setResponseTimeout(uint256 _timeoutSeconds) external onlyOwner {
         responseTimeoutSeconds = _timeoutSeconds;
     }
@@ -117,10 +101,6 @@ contract ReputationAggregator is ChainlinkClient, Ownable {
         return alpha;
     }
 
-    // ------------------------------------------------------------------------
-    // For “post-deployment” changes, or to override defaults:
-    // e.g. aggregator.setConfig(4, 3, 2, 300)
-    // ------------------------------------------------------------------------
     function setConfig(
         uint256 _oraclesToPoll,
         uint256 _requiredResponses,
@@ -138,27 +118,23 @@ contract ReputationAggregator is ChainlinkClient, Ownable {
     }
 
     // ------------------------------------------------------------------------
-    // Aggregator function: setChainlinkToken(address)
-    // We simply expose `_setChainlinkToken` from ChainlinkClient so your UI won't break.
+    // Expose Chainlink token setter
     // ------------------------------------------------------------------------
     function setChainlinkToken(address _link) external onlyOwner {
         _setChainlinkToken(_link);
     }
 
     // ------------------------------------------------------------------------
-    // OLD aggregator function: setChainlinkOracle(address)
-    // We store a single oracle & job to keep the front end happy,
-    // even though multi-oracle logic uses ReputationKeeper under the hood.
+    // Set a single Chainlink oracle (for front-end compatibility)
     // ------------------------------------------------------------------------
     function setChainlinkOracle(address _oracle) external onlyOwner {
         chainlinkOracle = _oracle;
         chainlinkJobId = bytes32("DefaultJobId");
-        chainlinkFee = 0.1 * 10**18; // e.g. 0.1 LINK
+        chainlinkFee = 0.1 * 10**18; // e.g., 0.1 LINK
     }
 
     // ------------------------------------------------------------------------
-    // (Optional) A debug function that fires the “Debug1” event
-    // so the old front end can call it if it wants.
+    // Debug function
     // ------------------------------------------------------------------------
     function emitDebug1() external {
         uint256 linkBalance = LinkTokenInterface(_chainlinkTokenAddress()).balanceOf(address(this));
@@ -166,14 +142,15 @@ contract ReputationAggregator is ChainlinkClient, Ownable {
     }
 
     // ------------------------------------------------------------------------
-    //   requestAIEvaluation(string[] memory cids)
-    // This also uses the new aggregator logic with multi-oracle selection.
+    // requestAIEvaluation: Initiates oracle requests and sets up aggregation.
+    // Each poll slot is recorded—even if the same oracle is selected multiple times.
     // ------------------------------------------------------------------------
     function requestAIEvaluation(string[] memory cids) public returns (bytes32) {
         require(address(reputationKeeper) != address(0), "ReputationKeeper not set");
         require(cids.length > 0, "CIDs array must not be empty");
 
-        // Select oracles using current alpha value
+        // Select oracles using the current alpha value.
+        // Note: This may return duplicate addresses.
         address[] memory selectedOracles = reputationKeeper.selectOracles(oraclesToPoll, alpha);
         reputationKeeper.recordUsedOracles(selectedOracles);
 
@@ -190,13 +167,19 @@ contract ReputationAggregator is ChainlinkClient, Ownable {
         aggEval.clusterSize = clusterSize;
         aggEval.isComplete = false;
 
+        // For each selected oracle (each poll slot), record it and send a request.
         for (uint256 i = 0; i < selectedOracles.length; i++) {
+            // Record this poll slot.
+            aggEval.polledOracles.push(selectedOracles[i]);
+
             address operator = selectedOracles[i];
             (bool isActive, , , bytes32 jobId, uint256 fee) = reputationKeeper.getOracleInfo(operator);
             require(isActive, "Selected oracle not active");
 
             bytes32 operatorRequestId = _sendSingleOracleRequest(operator, jobId, fee, cidsConcatenated);
             requestIdToAggregatorId[operatorRequestId] = aggregatorRequestId;
+            // Record the poll slot index (position in polledOracles array).
+            requestIdToPollIndex[operatorRequestId] = aggEval.polledOracles.length - 1;
             aggEval.requestIds[operatorRequestId] = true;
         }
 
@@ -204,9 +187,8 @@ contract ReputationAggregator is ChainlinkClient, Ownable {
         return aggregatorRequestId;
     }
 
-
     // ------------------------------------------------------------------------
-    // HELPER: send a single Chainlink request, also emit “ChainlinkRequested”
+    // Helper: send a single Chainlink request.
     // ------------------------------------------------------------------------
     function _sendSingleOracleRequest(
         address operator,
@@ -217,16 +199,12 @@ contract ReputationAggregator is ChainlinkClient, Ownable {
         Chainlink.Request memory req = _buildOperatorRequest(jobId, this.fulfill.selector);
         req._add("cid", cidsConcatenated);
         bytes32 operatorRequestId = _sendOperatorRequestTo(operator, req, fee);
-
-        // old aggregator’s event
-        emit ChainlinkRequested(operatorRequestId);
         return operatorRequestId;
     }
 
     // ------------------------------------------------------------------------
-    // CALLBACK from Chainlink node:
-    //   old aggregator had “fulfill(...)” with the same signature
-    // We also emit “ChainlinkFulfilled” to match old aggregator’s events.
+    // fulfill: Callback from Chainlink node.
+    // Records the poll slot (via requestIdToPollIndex) in the response.
     // ------------------------------------------------------------------------
     function fulfill(
         bytes32 _operatorRequestId,
@@ -235,7 +213,6 @@ contract ReputationAggregator is ChainlinkClient, Ownable {
     ) public recordChainlinkFulfillment(_operatorRequestId) {
         require(likelihoods.length > 0, "Likelihoods array must not be empty");
 
-        // aggregator-level request ID
         bytes32 aggregatorRequestId = requestIdToAggregatorId[_operatorRequestId];
         require(aggregatorRequestId != bytes32(0), "Unknown requestId");
 
@@ -243,131 +220,189 @@ contract ReputationAggregator is ChainlinkClient, Ownable {
         require(!aggEval.isComplete, "Aggregation already completed");
         require(aggEval.requestIds[_operatorRequestId], "Invalid requestId");
 
-        // Store response
+        // Get the poll slot index for this response.
+        uint256 pollIndex = requestIdToPollIndex[_operatorRequestId];
+
+        // Mark this response as selected if it is among the first N responses.
+        bool selected = (aggEval.responses.length < aggEval.requiredResponses);
+
         Response memory newResp = Response({
             likelihoods: likelihoods,
             justificationCID: justificationCID,
             requestId: _operatorRequestId,
-            included: true,
+            selected: selected,
             timestamp: block.timestamp,
-            operator: msg.sender
+            operator: msg.sender,
+            pollIndex: pollIndex
         });
         aggEval.responses.push(newResp);
         aggEval.responseCount++;
 
-        // old aggregator’s “ChainlinkFulfilled” event
         emit ChainlinkFulfilled(_operatorRequestId);
 
-        // finalize if we have enough
+        // Finalize aggregation once we've received the first N responses.
         if (aggEval.responseCount >= aggEval.requiredResponses) {
             _finalizeAggregation(aggregatorRequestId);
         }
     }
 
     // ------------------------------------------------------------------------
-    // finalizeAggregation: pick best cluster, average, and emit final event
+    // _finalizeAggregation: Clusters responses and updates reputation scores.
+    // Processes each poll slot individually so that even duplicate oracle selections
+    // are updated. For each poll slot:
+    // - If a response was received:
+    //     • If it is selected and clustered: update quality +1, timeliness +1.
+    //     • If it is selected but not clustered: update quality -1, timeliness 0.
+    // - If no response was received: update quality 0, timeliness -1.
     // ------------------------------------------------------------------------
+    function _finalizeAggregation(bytes32 aggregatorRequestId) internal {
+        AggregatedEvaluation storage aggEval = aggregatedEvaluations[aggregatorRequestId];
 
-    // _finalizeAggregation function to handle dual scoring
-function _finalizeAggregation(bytes32 aggregatorRequestId) internal {
-    AggregatedEvaluation storage aggEval = aggregatedEvaluations[aggregatorRequestId];
-
-    // Find request timestamp (earliest response time as approximation)
-    uint256 requestTime = type(uint256).max;
-    for (uint256 i = 0; i < aggEval.responses.length; i++) {
-        if (aggEval.responses[i].timestamp < requestTime) {
-            requestTime = aggEval.responses[i].timestamp;
-        }
-    }
-
-    uint256[] memory clusterIndices = _findBestCluster(aggEval.responses);
-
-    aggEval.aggregatedLikelihoods = new uint256[](aggEval.responses[0].likelihoods.length);
-    uint256 clusterCount = 0;
-
-for (uint256 i = 0; i < aggEval.responses.length; i++) {
-    bool isTimely = (aggEval.responses[i].timestamp - requestTime) <= responseTimeoutSeconds;
-    
-    if (clusterIndices[i] == 1) {
-        // Include in aggregation
-        for (uint256 j = 0; j < aggEval.responses[i].likelihoods.length; j++) {
-            aggEval.aggregatedLikelihoods[j] += aggEval.responses[i].likelihoods[j];
-        }
-        clusterCount++;
-        // Quality: clustered = +1
-        // Timeliness: clustered = +1 (regardless of time)
-        reputationKeeper.updateScores(
-            aggEval.responses[i].operator,
-            int8(1),  // quality +1 for clustering
-            int8(1)   // timeliness +1 for clustering
-        );
-    } else {
-        aggEval.responses[i].included = false;
-        // Quality: -1 if responded in time, 0 if not
-        // Timeliness: 0 if responded in time, -1 if not
-        reputationKeeper.updateScores(
-            aggEval.responses[i].operator,
-            isTimely ? int8(-1) : int8(0),  // quality -1 if timely, 0 if not
-            isTimely ? int8(0) : int8(-1)   // timeliness 0 if timely, -1 if not
-        );
-    }
-}
-
-
-    // Average the clustered responses
-    for (uint256 k = 0; k < aggEval.aggregatedLikelihoods.length; k++) {
-        aggEval.aggregatedLikelihoods[k] /= clusterCount;
-    }
-
-    aggEval.isComplete = true;
-
-    // Combine justification CIDs for included responses
-    string memory combinedCIDs = "";
-    bool first = true;
-    for (uint256 m = 0; m < aggEval.responses.length; m++) {
-        if (aggEval.responses[m].included) {
-            if (!first) {
-                combinedCIDs = string(abi.encodePacked(combinedCIDs, ","));
+        // 1. Build arrays of selected responses (the ones that are among the first N)
+        // along with their poll slot indices.
+        uint256 selectedCount = 0;
+        for (uint256 i = 0; i < aggEval.responses.length; i++) {
+            if (aggEval.responses[i].selected) {
+                selectedCount++;
             }
-            combinedCIDs = string(abi.encodePacked(combinedCIDs, aggEval.responses[m].justificationCID));
-            first = false;
         }
+        Response[] memory selectedResponses = new Response[](selectedCount);
+        uint256[] memory selectedPollIndices = new uint256[](selectedCount);
+        uint256 idx = 0;
+        for (uint256 i = 0; i < aggEval.responses.length; i++) {
+            if (aggEval.responses[i].selected) {
+                selectedResponses[idx] = aggEval.responses[i];
+                selectedPollIndices[idx] = aggEval.responses[i].pollIndex;
+                idx++;
+            }
+        }
+        uint256[] memory clusterResults;
+        if (selectedCount >= 2) {
+            clusterResults = _findBestCluster(selectedResponses);
+        } else {
+            clusterResults = new uint256[](selectedCount);
+            for (uint256 i = 0; i < selectedCount; i++) {
+                clusterResults[i] = 0;
+            }
+        }
+
+        // Initialize aggregatedLikelihoods.
+        if (aggEval.responses.length > 0) {
+            aggEval.aggregatedLikelihoods = new uint256[](aggEval.responses[0].likelihoods.length);
+        }
+        uint256 clusterCount = 0;
+
+        // 2. Process each poll slot (0 .. M-1).
+        uint256 m = aggEval.polledOracles.length;
+        for (uint256 slot = 0; slot < m; slot++) {
+            // Determine if a response exists for this poll slot.
+            bool responded = false;
+            uint256 respIndex = 0;
+            for (uint256 j = 0; j < aggEval.responses.length; j++) {
+                if (aggEval.responses[j].pollIndex == slot) {
+                    responded = true;
+                    respIndex = j;
+                    break;
+                }
+            }
+            if (responded) {
+                Response memory resp = aggEval.responses[respIndex];
+                // For a responded poll slot:
+                // If the response is selected, check its clustering result.
+                if (resp.selected) {
+                    // Find the index in the selected responses array corresponding to this poll slot.
+                    bool found = false;
+                    uint256 selIndex = 0;
+                    for (uint256 k = 0; k < selectedPollIndices.length; k++) {
+                        if (selectedPollIndices[k] == slot) {
+                            selIndex = k;
+                            found = true;
+                            break;
+                        }
+                    }
+                    if (found) {
+                        if (clusterResults[selIndex] == 1) {
+                            // Response clustered.
+                            for (uint256 j = 0; j < resp.likelihoods.length; j++) {
+                                aggEval.aggregatedLikelihoods[j] += resp.likelihoods[j];
+                            }
+                            clusterCount++;
+                            reputationKeeper.updateScores(resp.operator, int8(1), int8(1));
+                        } else {
+                            // Selected but not clustered.
+                            reputationKeeper.updateScores(resp.operator, int8(-1), int8(0));
+                        }
+                    }
+                } else {
+                    // Response exists but not selected (should not occur if finalization happens at first N responses).
+                    reputationKeeper.updateScores(resp.operator, int8(0), int8(-1));
+                }
+            } else {
+                // No response for this poll slot.
+                reputationKeeper.updateScores(aggEval.polledOracles[slot], int8(0), int8(-1));
+            }
+        }
+
+        // Average the aggregated likelihoods if any responses clustered.
+        if (clusterCount > 0) {
+            for (uint256 i = 0; i < aggEval.aggregatedLikelihoods.length; i++) {
+                aggEval.aggregatedLikelihoods[i] /= clusterCount;
+            }
+        }
+
+        // 3. Combine justification CIDs from clustered responses.
+        string memory combinedCIDs = "";
+        bool first = true;
+        for (uint256 slot = 0; slot < m; slot++) {
+            bool responded = false;
+            uint256 respIndex = 0;
+            for (uint256 j = 0; j < aggEval.responses.length; j++) {
+                if (aggEval.responses[j].pollIndex == slot) {
+                    responded = true;
+                    respIndex = j;
+                    break;
+                }
+            }
+            if (responded) {
+                Response memory resp = aggEval.responses[respIndex];
+                if (resp.selected) {
+                    bool found = false;
+                    uint256 selIndex = 0;
+                    for (uint256 k = 0; k < selectedPollIndices.length; k++) {
+                        if (selectedPollIndices[k] == slot) {
+                            selIndex = k;
+                            found = true;
+                            break;
+                        }
+                    }
+                    if (found && clusterResults[selIndex] == 1) {
+                        if (!first) {
+                            combinedCIDs = string(abi.encodePacked(combinedCIDs, ","));
+                        }
+                        combinedCIDs = string(abi.encodePacked(combinedCIDs, resp.justificationCID));
+                        first = false;
+                    }
+                }
+            }
+        }
+
+        aggEval.isComplete = true;
+        emit FulfillAIEvaluation(aggregatorRequestId, aggEval.aggregatedLikelihoods, combinedCIDs);
     }
 
-    emit FulfillAIEvaluation(aggregatorRequestId, aggEval.aggregatedLikelihoods, combinedCIDs);
-}
-
-
-
-
     // ------------------------------------------------------------------------
-    // selectOracles: pass the alpha parameter
-    // ------------------------------------------------------------------------
-function selectOracles(uint256 count) external view returns (address[] memory) {
-    require(address(reputationKeeper) != address(0), "ReputationKeeper not set");
-    require(count > 0, "Count must be greater than 0");
-    
-    // Pass the alpha parameter to ReputationKeeper's selectOracles
-    address[] memory selectedOracles = reputationKeeper.selectOracles(count, alpha);
-    return selectedOracles;
-}
-
-    // ------------------------------------------------------------------------
-    // Cluster logic: pick the pair with smallest distance
+    // Clustering logic: returns an array indicating which responses (in the
+    // input array) are in the best cluster.
     // ------------------------------------------------------------------------
     function _findBestCluster(Response[] memory responses) internal pure returns (uint256[] memory) {
         require(responses.length >= 2, "Need at least 2 responses");
-        
         uint256[] memory bestCluster = new uint256[](responses.length);
         uint256 bestDistance = type(uint256).max;
-
-        // compare each pair’s distance
         for (uint256 i = 0; i < responses.length - 1; i++) {
             for (uint256 j = i + 1; j < responses.length; j++) {
                 uint256 dist = _calculateDistance(responses[i].likelihoods, responses[j].likelihoods);
                 if (dist < bestDistance) {
                     bestDistance = dist;
-                    // mark these two as included
                     for (uint256 x = 0; x < responses.length; x++) {
                         bestCluster[x] = (x == i || x == j) ? 1 : 0;
                     }
@@ -388,8 +423,7 @@ function selectOracles(uint256 count) external view returns (address[] memory) {
     }
 
     // ------------------------------------------------------------------------
-    // OLD aggregator function: getEvaluation(bytes32)
-    //   => returns (uint256[] likelihoods, string justificationCID, bool exists)
+    // Evaluation getters (for front-end use)
     // ------------------------------------------------------------------------
     function getEvaluation(bytes32 requestId)
         public
@@ -401,12 +435,10 @@ function selectOracles(uint256 count) external view returns (address[] memory) {
         )
     {
         AggregatedEvaluation storage aggEval = aggregatedEvaluations[requestId];
-
-        // combine included CIDs
         string memory finalCIDs = "";
         bool first = true;
         for (uint256 i = 0; i < aggEval.responses.length; i++) {
-            if (aggEval.responses[i].included) {
+            if (aggEval.responses[i].selected) {
                 if (!first) {
                     finalCIDs = string(abi.encodePacked(finalCIDs, ","));
                 }
@@ -417,21 +449,11 @@ function selectOracles(uint256 count) external view returns (address[] memory) {
         return (aggEval.aggregatedLikelihoods, finalCIDs, aggEval.responseCount > 0);
     }
 
-    // ------------------------------------------------------------------------
-    // OLD aggregator function: evaluations(bytes32)
-    //   => returns (uint256[] likelihoods, string justificationCID)
-    // We just forward to getEvaluation(...) and discard the bool.
-    // ------------------------------------------------------------------------
     function evaluations(bytes32 requestId) public view returns (uint256[] memory, string memory) {
         (uint256[] memory l, string memory j, ) = getEvaluation(requestId);
         return (l, j);
     }
 
-    // ------------------------------------------------------------------------
-    // OLD aggregator function: getContractConfig()
-    //   => returns (address oracleAddr, address linkAddr, bytes32 jobId, uint256 fee)
-    // We supply a single “chainlinkOracle”, plus the link token, job, fee.
-    // ------------------------------------------------------------------------
     function getContractConfig()
         public
         view
@@ -451,7 +473,7 @@ function selectOracles(uint256 count) external view returns (address[] memory) {
     }
 
     // ------------------------------------------------------------------------
-    // HELPER: Concatenate CIDs with commas
+    // Helper: Concatenate CIDs with commas.
     // ------------------------------------------------------------------------
     function concatenateCids(string[] memory cids) internal pure returns (string memory) {
         bytes memory out;
@@ -465,7 +487,7 @@ function selectOracles(uint256 count) external view returns (address[] memory) {
     }
 
     // ------------------------------------------------------------------------
-    // UTILITY: withdraw LINK if needed
+    // Utility: withdraw LINK if needed.
     // ------------------------------------------------------------------------
     function withdrawLink(address payable _to, uint256 _amount) external onlyOwner {
         LinkTokenInterface link = LinkTokenInterface(_chainlinkTokenAddress());
