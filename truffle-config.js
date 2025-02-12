@@ -97,7 +97,7 @@ module.exports = {
 			        ),
 	          network_id: 84532,       // Base Sepolia network ID
 	          chain_id: 84532,         // Base Sepolia chain ID
-	          gas: 5000000,            // Gas limit
+	          gas: 10000000,            // Gas limit
 	          gasPrice: 1000000000,    // Gas price (1 Gwei)
 	          confirmations: 2,        // # of confirmations to wait between deployments
 	          timeoutBlocks: 400,      // # of blocks before a deployment times out
@@ -124,13 +124,13 @@ module.exports = {
     solc: {
       version: "0.8.21",      // Fetch exact version from solc-bin (default: truffle's version)
       // docker: true,        // Use "0.5.1" you've installed locally with docker (default: false)
-      // settings: {          // See the solidity docs for advice about optimization and evmVersion
-      //  optimizer: {
-      //    enabled: false,
-      //    runs: 200
-      //  },
+      settings: {          // See the solidity docs for advice about optimization and evmVersion
+       optimizer: {
+         enabled: true,
+         runs: 200
+       },
       //  evmVersion: "byzantium"
-      // }
+      }
     }
   },
 
