@@ -1,5 +1,8 @@
-// To use an aggregator contract: truffle exec scripts/oracle-poller.js --network base_sepolia -a 0xbabE69DdF8CBbe63fEDB6f49904efB35522667Af
-// To use the aggregator in artifacts: truffle exec scripts/oracle-poller.js --network base_sepolia
+// scripts/oracle-poller.js
+// To use an aggregator contract: 
+// truffle exec scripts/oracle-poller.js --network base_sepolia -a 0xbabE69DdF8CBbe63fEDB6f49904efB35522667Af
+// To use the aggregator in artifacts: 
+// truffle exec scripts/oracle-poller.js --network base_sepolia
 
 const ReputationKeeper = artifacts.require('ReputationKeeper');
 const yargs = require('yargs/yargs');
@@ -55,41 +58,47 @@ module.exports = async function(callback) {
     
     // Try the first few indices to see if we can find any registered oracles
     while (i < 10) {
-        try {
-            const oracleAddress = await keeper.registeredOracles(i);
-            if (oracleAddress && oracleAddress !== '0x0000000000000000000000000000000000000000') {
-                const info = await keeper.getOracleInfo(oracleAddress);
-                foundOracles.push({
-                    address: oracleAddress,
-                    info: info
-                });
-            }
-        } catch (error) {
-            // If we get an error, we've probably hit the end of the array
-            break;
+      try {
+        // Since registeredOracles is now an array of OracleIdentity structs,
+        // the getter returns an object with properties 'oracle' and 'jobId'.
+        const oracleIdentity = await keeper.registeredOracles(i);
+        // Check that the oracle address is not the zero address.
+        if (oracleIdentity.oracle && oracleIdentity.oracle !== '0x0000000000000000000000000000000000000000') {
+          // Now call getOracleInfo with both the oracle address and its job ID.
+          const info = await keeper.getOracleInfo(oracleIdentity.oracle, oracleIdentity.jobId);
+          foundOracles.push({
+            address: oracleIdentity.oracle,
+            jobId: oracleIdentity.jobId,
+            info: info
+          });
         }
-        i++;
+      } catch (error) {
+        // If we get an error, we've likely hit the end of the array.
+        break;
+      }
+      i++;
     }
 
     if (foundOracles.length === 0) {
-        console.log("\nNo oracles found.");
-        console.log("To register an oracle, you need to:");
-        console.log("1. Have the required VDKA tokens (100 VDKA)")
-        console.log("2. Call registerOracle() with:")
-        console.log("   - oracle address")
-        console.log("   - jobId")
-        console.log("   - fee")
+      console.log("\nNo oracles found.");
+      console.log("To register an oracle, you need to:");
+      console.log("1. Have the required VDKA tokens (100 VDKA)");
+      console.log("2. Call registerOracle() with:");
+      console.log("   - oracle address");
+      console.log("   - jobId");
+      console.log("   - fee");
     } else {
-        console.log(`\nFound ${foundOracles.length} oracle(s):`);
-        foundOracles.forEach((oracle, index) => {
-            console.log(`\nOracle ${index + 1}:`);
-            console.log(`Address: ${oracle.address}`);
-            console.log(`Active: ${oracle.info.isActive}`);
-            console.log(`Quality Score: ${oracle.info.qualityScore.toString()}`);
-            console.log(`Timeliness Score: ${oracle.info.timelinessScore.toString()}`);
-            console.log(`Job ID: ${oracle.info.jobId}`);
-            console.log(`Fee: ${oracle.info.fee.toString()}`);
-        });
+      console.log(`\nFound ${foundOracles.length} oracle(s):`);
+      foundOracles.forEach((oracle, index) => {
+        console.log(`\nOracle ${index + 1}:`);
+        console.log(`Address: ${oracle.address}`);
+        console.log(`Active: ${oracle.info.isActive}`);
+        console.log(`Quality Score: ${oracle.info.qualityScore.toString()}`);
+        console.log(`Timeliness Score: ${oracle.info.timelinessScore.toString()}`);
+        // Convert the jobId from bytes32 to a readable string (if needed)
+        console.log(`Job ID: ${web3.utils.hexToAscii(oracle.jobId)}`);
+        console.log(`Fee: ${oracle.info.fee.toString()}`);
+      });
     }
     
     callback();
@@ -98,3 +107,4 @@ module.exports = async function(callback) {
     callback(error);
   }
 };
+
