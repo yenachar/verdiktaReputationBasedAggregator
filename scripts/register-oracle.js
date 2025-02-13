@@ -1,4 +1,5 @@
 // scripts/register-oracle.js
+// Registers one or more jobs associated with a single oracle address.
 const VerdiktaToken = artifacts.require("VerdiktaToken");
 const ReputationKeeper = artifacts.require("ReputationKeeper");
 const ReputationAggregator = artifacts.require("ReputationAggregator");
@@ -16,11 +17,16 @@ module.exports = async function(callback) {
     // Oracle contract address
     const oracleAddress = "0xD67D6508D4E5611cd6a463Dd0969Fa153Be91101";
     console.log('Registering oracle contract:', oracleAddress);
-	  
-    // Define oracle details BEFORE checking registration.
-    // Here we convert a job ID string to a bytes32 value.
-    const jobIdString = "38f19572c51041baa5f2dea284614590";
-    const jobId = web3.utils.fromAscii(jobIdString);
+    
+    // Define oracle details.
+    // Give array of jobId strings.
+    const jobIdStrings = [
+      "38f19572c51041baa5f2dea284614590",
+      "39515f75ac2947beb7f2eeae4d8eaf3e"
+      // Add additional jobId strings as needed, e.g.:
+      // "anotherjobidstringhere",
+      // "yetanotherjobidstring"
+    ];
     const linkFee = "50000000000000000"; // 0.05 LINK (18 decimals)
     const vdkaStake = "100000000000000000000"; // 100 VDKA (18 decimals)
 
@@ -28,61 +34,68 @@ module.exports = async function(callback) {
     const verdikta = await VerdiktaToken.deployed();
     const keeper = await ReputationKeeper.deployed();
 
-    // Check if oracle is already registered (using oracleAddress and jobId)
-    const oracleInfo = await keeper.getOracleInfo(oracleAddress, jobId);
-    console.log('Oracle registration status:', {
+    // Loop over each jobId and register it if not already active
+    for (let i = 0; i < jobIdStrings.length; i++) {
+      const currentJobIdString = jobIdStrings[i];
+      // Convert the job ID string to a bytes32 value.
+      const jobId = web3.utils.fromAscii(currentJobIdString);
+      console.log(`\nProcessing jobID ${currentJobIdString} (bytes32: ${jobId})`);
+
+      // Check if oracle is already registered (using oracleAddress and jobId)
+      const oracleInfo = await keeper.getOracleInfo(oracleAddress, jobId);
+      console.log(`Oracle registration status for jobID ${currentJobIdString}:`, {
         isActive: oracleInfo.isActive,
         qualityScore: oracleInfo.qualityScore.toString(),
         timelinessScore: oracleInfo.timelinessScore.toString(),
         jobId: web3.utils.hexToAscii(oracleInfo.jobId),
         fee: oracleInfo.fee.toString()
-    });
+      });
 
-    if (oracleInfo.isActive) {
-        console.log('Oracle is already registered. Proceeding with LINK approval...');
-    } else {
+      if (oracleInfo.isActive) {
+          console.log(`Oracle for jobID ${currentJobIdString} is already registered. Proceeding with LINK approval...`);
+      } else {
+        // Log addresses for verification
+        console.log('Using contracts:');
+        console.log('VerdiktaToken:', verdikta.address);
+        console.log('ReputationKeeper:', keeper.address);
 
-      // Log addresses for verification
-      console.log('Using contracts:');
-      console.log('VerdiktaToken:', verdikta.address);
-      console.log('ReputationKeeper:', keeper.address);
+        // Check VDKA balance
+        const balance = await verdikta.balanceOf(owner);
+        console.log('VDKA Balance:', balance.toString());
+        if (web3.utils.toBN(balance).lt(web3.utils.toBN(vdkaStake))) {
+           throw new Error('Insufficient VDKA balance for staking');
+        }
 
-      // Check VDKA balance
-      const balance = await verdikta.balanceOf(owner);
-      console.log('VDKA Balance:', balance.toString());
-      if (web3.utils.toBN(balance).lt(web3.utils.toBN(vdkaStake))) {
-         throw new Error('Insufficient VDKA balance for staking');
+        // First check allowance
+        const currentAllowance = await verdikta.allowance(owner, keeper.address);
+        console.log('Current VDKA allowance:', currentAllowance.toString());
+
+        // Approve keeper to spend VDKA
+        console.log('Approving keeper to spend VDKA...');
+        console.log('Approval params:', {
+            owner: owner,
+            spender: keeper.address,
+            amount: vdkaStake
+        });
+        await verdikta.approve(keeper.address, vdkaStake, { from: owner });
+        console.log('VDKA spend approved');
+
+        // Register oracle with the current jobId
+        console.log(`Registering oracle for jobID ${currentJobIdString}...`);
+        console.log('Registering with params:', {
+            oracleAddress,
+            jobId,
+            linkFee,
+            from: owner,
+            keeper: keeper.address
+        });
+        await keeper.registerOracle(oracleAddress, jobId, linkFee, { from: owner });
+        console.log(`Oracle registered successfully for jobID ${currentJobIdString}`);
       }
-
-      // First check allowance
-      const currentAllowance = await verdikta.allowance(owner, keeper.address);
-      console.log('Current VDKA allowance:', currentAllowance.toString());
-
-      // Approve keeper to spend VDKA
-      console.log('Approving keeper to spend VDKA...');
-      console.log('Approval params:', {
-          owner: owner,
-          spender: keeper.address,
-          amount: vdkaStake
-      });
-      await verdikta.approve(keeper.address, vdkaStake, { from: owner });
-      console.log('VDKA spend approved');
-
-      // Register oracle
-      console.log('Registering oracle...');
-      console.log('Registering with params:', {
-          oracleAddress,
-          jobId,
-          linkFee,
-          from: owner,
-          keeper: keeper.address
-      });
-      await keeper.registerOracle(oracleAddress, jobId, linkFee, { from: owner });
-      console.log('Oracle registered successfully');
     }
 
     // Set up LINK approval for the aggregator
-    console.log('Setting up LINK token approval...');
+    console.log('\nSetting up LINK token approval...');
     const aggregator = await ReputationAggregator.deployed();
     const config = await aggregator.getContractConfig();
     const linkTokenAddress = config.linkAddr;
