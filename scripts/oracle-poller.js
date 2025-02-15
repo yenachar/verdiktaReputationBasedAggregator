@@ -25,6 +25,24 @@ const AggregatorABI = [
   }
 ];
 
+// Minimal ABI for calling owner() on an oracle contract.
+const minimalOwnerABI = [
+  {
+    "constant": true,
+    "inputs": [],
+    "name": "owner",
+    "outputs": [
+      {
+        "name": "",
+        "type": "address"
+      }
+    ],
+    "payable": false,
+    "stateMutability": "view",
+    "type": "function"
+  }
+];
+
 module.exports = async function(callback) {
   try {
     const argv = yargs(hideBin(process.argv))
@@ -50,21 +68,20 @@ module.exports = async function(callback) {
     
     console.log(`Connected to ReputationKeeper at: ${keeper.address}`);
     
-    // Try to get registered oracles differently
+    // Try to get registered oracles directly from the public array.
     console.log("\nAttempting to get oracles directly...");
 
     let i = 0;
     let foundOracles = [];
     
-    // Try the first few indices to see if we can find any registered oracles
+    // Try the first few indices to see if we can find any registered oracles.
     while (i < 10) {
       try {
-        // Since registeredOracles is now an array of OracleIdentity structs,
-        // the getter returns an object with properties 'oracle' and 'jobId'.
+        // registeredOracles is an array of OracleIdentity structs with 'oracle' and 'jobId' fields.
         const oracleIdentity = await keeper.registeredOracles(i);
         // Check that the oracle address is not the zero address.
         if (oracleIdentity.oracle && oracleIdentity.oracle !== '0x0000000000000000000000000000000000000000') {
-          // Now call getOracleInfo with both the oracle address and its job ID.
+          // Retrieve oracle info using both the oracle address and its job ID.
           const info = await keeper.getOracleInfo(oracleIdentity.oracle, oracleIdentity.jobId);
           foundOracles.push({
             address: oracleIdentity.oracle,
@@ -73,7 +90,7 @@ module.exports = async function(callback) {
           });
         }
       } catch (error) {
-        // If we get an error, we've likely hit the end of the array.
+        // If an error occurs, we likely have reached the end of the array.
         break;
       }
       i++;
@@ -89,16 +106,28 @@ module.exports = async function(callback) {
       console.log("   - fee");
     } else {
       console.log(`\nFound ${foundOracles.length} oracle(s):`);
-      foundOracles.forEach((oracle, index) => {
+      // Use a for...of loop so we can await the owner() call for each oracle.
+      for (let index = 0; index < foundOracles.length; index++) {
+        const oracle = foundOracles[index];
         console.log(`\nOracle ${index + 1}:`);
         console.log(`Address: ${oracle.address}`);
         console.log(`Active: ${oracle.info.isActive}`);
         console.log(`Quality Score: ${oracle.info.qualityScore.toString()}`);
         console.log(`Timeliness Score: ${oracle.info.timelinessScore.toString()}`);
-        // Convert the jobId from bytes32 to a readable string (if needed)
+        // Convert the jobId from bytes32 to a readable string.
         console.log(`Job ID: ${web3.utils.hexToAscii(oracle.jobId)}`);
         console.log(`Fee: ${oracle.info.fee.toString()}`);
-      });
+
+        // Create a minimal contract instance to query the owner() function.
+        let ownerAddress;
+        try {
+          const ownerContract = new web3.eth.Contract(minimalOwnerABI, oracle.address);
+          ownerAddress = await ownerContract.methods.owner().call();
+        } catch (error) {
+          ownerAddress = "Error retrieving owner";
+        }
+        console.log(`Owner Address: ${ownerAddress}`);
+      }
     }
     
     callback();
