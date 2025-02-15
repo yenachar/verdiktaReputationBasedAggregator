@@ -91,7 +91,10 @@ module.exports = {
     // },
     base_sepolia: {
 	          provider: () => new HDWalletProvider(
+			  [
 			          process.env.PRIVATE_KEY,
+			          process.env.PRIVATE_KEY_2
+			  ], 
 			          //`https://base-sepolia.infura.io/v3/${process.env.INFURA_API_KEY}`
 			          `https://sepolia.base.org`
 			        ),
