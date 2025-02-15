@@ -1,14 +1,17 @@
-// scripts/register-oracle-user-supplied.js
+// scripts/register-oracle-cl.js
 // Registers one or more jobs associated with a single oracle address,
 // using user-supplied contract addresses and minimal ABIs.
 //
 // Usage example:
-// truffle exec scripts/register-oracle-user-supplied.js \
+// truffle exec scripts/register-oracle-cl.js \
 //   --aggregator 0xAggregatorAddress \
 //   --link 0xLinkTokenAddress \
 //   --oracle 0xOracleAddress \
 //   --verdikta 0xVerdiktaTokenAddress \
 //   --jobids "jobid1" "jobid2" --network your_network
+//   (Shortcuts, like -l instead of --link also works)
+//   Here is an example registering two jobIDs:
+//   truffle exec scripts/register-oracle-cl.js -a 0xF6b930bDC1b4b64080AA52fb6d4A5C7f9431a27a -l 0xE4aB69C077896252FAFBD49EFD26B5D171A32410 -v 0x9eF54beC2E9051411aFec2161E5eCC56993D9905 -o 0xD67D6508D4E5611cd6a463Dd0969Fa153Be91101 --jobids "38f19572c51041baa5f2dea284614590" "39515f75ac2947beb7f2eeae4d8eaf3e" --network base_sepolia
 
 const yargs = require('yargs/yargs');
 const { hideBin } = require('yargs/helpers');
@@ -183,6 +186,7 @@ module.exports = async function(callback) {
         type: 'array',
         description: 'Job ID strings (as an array)'
       })
+      .demandOption('jobids', 'You must provide at least one job id')
       .help()
       .argv;
 
@@ -213,7 +217,9 @@ module.exports = async function(callback) {
     const linkToken = new web3.eth.Contract(LinkTokenABI, argv.link);
 
     // Oracle contract address (supplied by user)
-    const oracleAddress = argv.oracle;
+    // const oracleAddress = argv.oracle;
+    const oracleAddress = Array.isArray(argv.oracle) ? argv.oracle[0] : argv.oracle;
+
     console.log('Registering oracle contract:', oracleAddress);
     
     // Process job IDs from argv.jobids
