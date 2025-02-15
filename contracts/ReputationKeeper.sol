@@ -4,6 +4,12 @@ pragma solidity ^0.8.21;
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "./VerdiktaToken.sol";
 
+/// @notice Minimal interface to query an oracle contract's owner.
+/// It assumes the oracle contract implements an owner() function.
+interface IOracleOwner {
+    function owner() external view returns (address);
+}
+
 /**
  * @title ReputationKeeper
  * @notice Tracks oracle reputations using composite keys (oracle address and jobID).
@@ -65,11 +71,23 @@ contract ReputationKeeper is Ownable {
      * @param _oracle The oracle’s address.
      * @param _jobId The Chainlink job ID.
      * @param fee The LINK fee for this job.
+     *
+     * Requirements:
+     * - The oracle must not already be registered.
+     * - The fee must be greater than 0.
+     * - The caller must be either the owner of this ReputationKeeper or the owner of the oracle contract.
+     * - The caller must have approved this contract to transfer the required stake.
      */
     function registerOracle(address _oracle, bytes32 _jobId, uint256 fee) external {
         bytes32 key = _oracleKey(_oracle, _jobId);
         require(!oracles[key].isActive, "Oracle already registered");
         require(fee > 0, "Fee must be greater than 0");
+        
+        // Allow registration if the caller is either the owner of this contract or the owner of the oracle.
+        require(
+            msg.sender == owner() || msg.sender == IOracleOwner(_oracle).owner(),
+            "Not authorized to register oracle"
+        );
         
         // Transfer the stake from the registering party.
         verdiktaToken.transferFrom(msg.sender, address(this), STAKE_REQUIREMENT);
@@ -93,12 +111,20 @@ contract ReputationKeeper is Ownable {
      * @notice Deregister an oracle identity.
      * @param _oracle The oracle’s address.
      * @param _jobId The Chainlink job ID.
+     *
+     * Requirements:
+     * - The oracle must be currently registered.
+     * - The caller must be either the owner of this ReputationKeeper or the owner of the oracle contract.
      */
     function deregisterOracle(address _oracle, bytes32 _jobId) external {
         bytes32 key = _oracleKey(_oracle, _jobId);
         require(oracles[key].isActive, "Oracle not registered");
-        require(msg.sender == _oracle, "Only oracle can deregister itself");
+        require(
+            msg.sender == owner() || msg.sender == IOracleOwner(_oracle).owner(),
+            "Not authorized to deregister oracle"
+        );
         
+        // Return the staked tokens to the caller.
         verdiktaToken.transfer(msg.sender, oracles[key].stakeAmount);
         
         oracles[key].stakeAmount = 0;
