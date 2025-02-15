@@ -98,7 +98,7 @@ module.exports = {
 	          network_id: 84532,       // Base Sepolia network ID
 	          chain_id: 84532,         // Base Sepolia chain ID
 	          gas: 10000000,            // Gas limit
-	          gasPrice: 1000000000,    // Gas price (1 Gwei)
+	          gasPrice: 2000000000,    // Gas price (2 Gwei)
 	          confirmations: 2,        // # of confirmations to wait between deployments
 	          timeoutBlocks: 400,      // # of blocks before a deployment times out
 	          networkCheckTimeout: 30000, // Milliseconds to wait for network to start (1/2 minute)

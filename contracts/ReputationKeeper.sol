@@ -102,7 +102,17 @@ contract ReputationKeeper is Ownable {
             fee: fee
         });
         
-        registeredOracles.push(OracleIdentity({oracle: _oracle, jobId: _jobId}));
+        // Only push the OracleIdentity if one doesn't already exist.
+        bool exists = false;
+        for (uint256 i = 0; i < registeredOracles.length; i++) {
+            if (registeredOracles[i].oracle == _oracle && registeredOracles[i].jobId == _jobId) {
+                exists = true;
+                break;
+            }
+        }
+        if (!exists) {
+            registeredOracles.push(OracleIdentity({oracle: _oracle, jobId: _jobId}));
+        }
         
         emit OracleRegistered(_oracle, _jobId, fee);
     }
