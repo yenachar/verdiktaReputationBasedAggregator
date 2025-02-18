@@ -114,6 +114,8 @@ module.exports = async function(callback) {
         console.log(`Active: ${oracle.info.isActive}`);
         console.log(`Quality Score: ${oracle.info.qualityScore.toString()}`);
         console.log(`Timeliness Score: ${oracle.info.timelinessScore.toString()}`);
+        // New: Print the call count.
+        console.log(`Call Count: ${oracle.info.callCount.toString()}`);
         // Convert the jobId from bytes32 to a readable string.
         console.log(`Job ID: ${web3.utils.hexToAscii(oracle.jobId)}`);
         console.log(`Fee: ${oracle.info.fee.toString()}`);

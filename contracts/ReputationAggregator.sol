@@ -167,7 +167,8 @@ contract ReputationAggregator is ChainlinkClient, Ownable {
 
             address operator = selectedOracles[i].oracle;
             bytes32 jobIdForOracle = selectedOracles[i].jobId;
-            (bool isActive, , , bytes32 jobIdReturned, uint256 fee) = reputationKeeper.getOracleInfo(operator, jobIdForOracle);
+            // Modified tuple unpacking to include six components.
+            (bool isActive, , , , bytes32 jobIdReturned, uint256 fee) = reputationKeeper.getOracleInfo(operator, jobIdForOracle);
             require(isActive, "Selected oracle not active at time of polling");
 
             bytes32 operatorRequestId = _sendSingleOracleRequest(operator, jobIdReturned, fee, cidsConcatenated);
@@ -343,7 +344,8 @@ contract ReputationAggregator is ChainlinkClient, Ownable {
         uint256[] memory clusterResults
     ) internal returns (bool processed, uint256 updateCluster) {
         ReputationKeeper.OracleIdentity memory id = aggEval.polledOracles[slot];
-        (bool isActive, , , , ) = reputationKeeper.getOracleInfo(id.oracle, id.jobId);
+        // Modified tuple unpacking to include six components.
+        (bool isActive, , , , , ) = reputationKeeper.getOracleInfo(id.oracle, id.jobId);
         if (!isActive) {
             emit OracleScoreUpdateSkipped(id.oracle, id.jobId, "Inactive at finalization");
             return (false, 0);

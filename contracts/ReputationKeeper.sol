@@ -29,6 +29,7 @@ contract ReputationKeeper is Ownable {
         bool isActive;          // Whether oracle is currently active
         bytes32 jobId;          // The job ID (redundant but stored for convenience)
         uint256 fee;            // LINK fee required for this job
+        uint256 callCount;      // Number of times this oracle has been called
     }
     
     // Per–contract usage data.
@@ -99,7 +100,8 @@ contract ReputationKeeper is Ownable {
             stakeAmount: STAKE_REQUIREMENT,
             isActive: true,
             jobId: _jobId,
-            fee: fee
+            fee: fee,
+            callCount: 0  // Initialize call count to zero
         });
         
         // Only push the OracleIdentity if one doesn't already exist.
@@ -152,6 +154,7 @@ contract ReputationKeeper is Ownable {
         bool isActive,
         int256 qualityScore,
         int256 timelinessScore,
+        uint256 callCount,
         bytes32 jobId,
         uint256 fee
     ) {
@@ -161,6 +164,7 @@ contract ReputationKeeper is Ownable {
             info.isActive,
             info.qualityScore,
             info.timelinessScore,
+            info.callCount,
             info.jobId,
             info.fee
         );
@@ -182,6 +186,8 @@ contract ReputationKeeper is Ownable {
         bytes32 key = _oracleKey(_oracle, _jobId);
         require(approvedContracts[msg.sender].usedOracles[key], "Oracle not used by this contract");
         
+        // Increment call count since the oracle is being used.
+        oracles[key].callCount++;
         oracles[key].qualityScore += qualityChange;
         oracles[key].timelinessScore += timelinessChange;
         
