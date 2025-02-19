@@ -71,7 +71,7 @@ contract ReputationAggregator is ChainlinkClient, Ownable {
         bool isComplete;
         mapping(bytes32 => bool) requestIds;  // Track valid request IDs
         ReputationKeeper.OracleIdentity[] polledOracles;
-        uint256[] pollFees; // NEW: store the fee for each poll slot for bonus payment.
+        uint256[] pollFees; // NEW: store the fee for each poll slot (for bonus payment)
     }
 
     // Mapping from aggregator-level requestId to its evaluation.
@@ -231,6 +231,7 @@ contract ReputationAggregator is ChainlinkClient, Ownable {
         uint256 pollIndex = requestIdToPollIndex[_operatorRequestId];
         ReputationKeeper.OracleIdentity memory oracleIdentity = aggEval.polledOracles[pollIndex];
 
+        // Mark as selected if we haven't yet reached the required number of responses.
         bool selected = (aggEval.responses.length < aggEval.requiredResponses);
 
         Response memory newResp = Response({
@@ -255,32 +256,30 @@ contract ReputationAggregator is ChainlinkClient, Ownable {
     }
 
     // ------------------------------------------------------------------------
-    // _finalizeAggregation: Processes responses and updates oracle reputations.
-    // Splits the per-slot processing into a helper to reduce local variables.
+    // _finalizeAggregation: Processes responses and pays bonus fees.
     // ------------------------------------------------------------------------
     function _finalizeAggregation(bytes32 aggregatorRequestId) internal {
         AggregatedEvaluation storage aggEval = aggregatedEvaluations[aggregatorRequestId];
 
-        // Build arrays of selected responses.
+        // Build an array of selected response indices (i.e. indices into aggEval.responses).
         uint256 selectedCount = 0;
         for (uint256 i = 0; i < aggEval.responses.length; i++) {
             if (aggEval.responses[i].selected) {
                 selectedCount++;
             }
         }
-        // Allocate array to pass to clustering logic.
-        uint256[] memory selectedPollIndices = new uint256[](selectedCount);
+        uint256[] memory selectedResponseIndices = new uint256[](selectedCount);
         uint256 idx = 0;
         for (uint256 i = 0; i < aggEval.responses.length; i++) {
             if (aggEval.responses[i].selected) {
-                selectedPollIndices[idx] = aggEval.responses[i].pollIndex;
+                selectedResponseIndices[idx] = i;
                 idx++;
             }
         }
         uint256[] memory clusterResults;
         if (selectedCount >= 2) {
-            // This function returns an array indicating which selected responses are in the best cluster.
-            clusterResults = _findBestClusterFromResponses(aggEval.responses, selectedPollIndices);
+            // Get clustering results based on selected responses.
+            clusterResults = _findBestClusterFromResponses(aggEval.responses, selectedResponseIndices);
         } else {
             clusterResults = new uint256[](selectedCount);
             for (uint256 i = 0; i < selectedCount; i++) {
@@ -293,13 +292,11 @@ contract ReputationAggregator is ChainlinkClient, Ownable {
             aggEval.aggregatedLikelihoods = new uint256[](aggEval.responses[0].likelihoods.length);
         }
         uint256 clusterCount = 0;
-
-        // Process each poll slot.
         uint256 m = aggEval.polledOracles.length;
         for (uint256 slot = 0; slot < m; slot++) {
             bool processed;
             uint256 updateCluster;
-            (processed, updateCluster) = _processPollSlot(aggEval, slot, selectedPollIndices, clusterResults);
+            (processed, updateCluster) = _processPollSlot(aggEval, slot, selectedResponseIndices, clusterResults);
             if (processed && updateCluster > 0) {
                 // Accumulate likelihoods for clustered responses.
                 uint256[] storage aggregated = aggEval.aggregatedLikelihoods;
@@ -328,9 +325,9 @@ contract ReputationAggregator is ChainlinkClient, Ownable {
             uint256 respIdx = _findResponseIndexForSlot(aggEval.responses, slot);
             if (respIdx < aggEval.responses.length) {
                 Response memory resp = aggEval.responses[respIdx];
-                // Include only responses that are selected and in the best cluster.
                 if (resp.selected) {
-                    (bool found, uint256 selIndex) = _findIndexInArray(selectedPollIndices, slot);
+                    // Find the response's index in the selectedResponseIndices array.
+                    (bool found, uint256 selIndex) = _findIndexInArray(selectedResponseIndices, respIdx);
                     if (found && clusterResults[selIndex] == 1) {
                         if (!first) {
                             combinedCIDs = string(abi.encodePacked(combinedCIDs, ","));
@@ -349,12 +346,12 @@ contract ReputationAggregator is ChainlinkClient, Ownable {
     // ------------------------------------------------------------------------
     // Helper: Process one poll slot.
     // Returns (processed, updateCluster) where updateCluster is 1 if the response
-    // for this slot is clustered (triggering a bonus fee payment).
+    // for this slot is in the best cluster (and a bonus fee is paid).
     // ------------------------------------------------------------------------
     function _processPollSlot(
         AggregatedEvaluation storage aggEval,
         uint256 slot,
-        uint256[] memory selectedPollIndices,
+        uint256[] memory selectedResponseIndices,
         uint256[] memory clusterResults
     ) internal returns (bool processed, uint256 updateCluster) {
         ReputationKeeper.OracleIdentity memory id = aggEval.polledOracles[slot];
@@ -369,16 +366,17 @@ contract ReputationAggregator is ChainlinkClient, Ownable {
         if (responded) {
             Response memory resp = aggEval.responses[respIndex];
             if (resp.selected) {
-                (bool found, uint256 selIndex) = _findIndexInArray(selectedPollIndices, slot);
+                // Find the index of this response in the selectedResponseIndices array.
+                (bool found, uint256 selIndex) = _findIndexInArray(selectedResponseIndices, respIndex);
                 if (found) {
                     if (clusterResults[selIndex] == 1) {
-                        // Clustered: bonus stage.
+                        // Clustered: update scores and pay bonus.
                         try reputationKeeper.updateScores(resp.operator, resp.jobId, int8(1), int8(1)) {
                             // success
                         } catch {
                             emit OracleScoreUpdateSkipped(resp.operator, resp.jobId, "updateScores failed for clustered selected response");
                         }
-                        // BONUS PAYMENT: Transfer extra fee equal to the original fee.
+                        // BONUS PAYMENT: transfer extra fee equal to the original fee.
                         uint256 bonusFee = aggEval.pollFees[slot];
                         LinkTokenInterface link = LinkTokenInterface(_chainlinkTokenAddress());
                         require(link.transfer(resp.operator, bonusFee), "Bonus fee transfer failed");
@@ -452,18 +450,18 @@ contract ReputationAggregator is ChainlinkClient, Ownable {
 
     // ------------------------------------------------------------------------
     // Clustering logic: returns an array indicating which selected responses are in the best cluster.
-    // The array length equals the length of the selectedPollIndices array.
+    // The returned array length equals the length of selectedResponseIndices.
     // ------------------------------------------------------------------------
-    function _findBestClusterFromResponses(Response[] memory responses, uint256[] memory selectedPollIndices) internal pure returns (uint256[] memory) {
-        uint256 count = selectedPollIndices.length;
+    function _findBestClusterFromResponses(Response[] memory responses, uint256[] memory selectedResponseIndices) internal pure returns (uint256[] memory) {
+        uint256 count = selectedResponseIndices.length;
         require(count >= 2, "Need at least 2 responses");
         uint256[] memory bestCluster = new uint256[](count);
         uint256 bestDistance = type(uint256).max;
         // Loop over pairs of selected responses.
         for (uint256 i = 0; i < count - 1; i++) {
             for (uint256 j = i + 1; j < count; j++) {
-                uint256 respIndexA = selectedPollIndices[i];
-                uint256 respIndexB = selectedPollIndices[j];
+                uint256 respIndexA = selectedResponseIndices[i];
+                uint256 respIndexB = selectedResponseIndices[j];
                 if (respIndexA >= responses.length || respIndexB >= responses.length) continue;
                 uint256 dist = _calculateDistance(responses[respIndexA].likelihoods, responses[respIndexB].likelihoods);
                 if (dist < bestDistance) {
@@ -552,7 +550,7 @@ contract ReputationAggregator is ChainlinkClient, Ownable {
     }
 
     // ------------------------------------------------------------------------
-    // Utility: withdraw LINK if needed.
+    // Utility: Withdraw LINK if needed.
     // ------------------------------------------------------------------------
     function withdrawLink(address payable _to, uint256 _amount) external onlyOwner {
         LinkTokenInterface link = LinkTokenInterface(_chainlinkTokenAddress());
