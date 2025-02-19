@@ -23,6 +23,9 @@ contract ReputationAggregator is ChainlinkClient, Ownable {
     uint256 public responseTimeoutSeconds = 300; // (not used for scoring)
     uint256 public alpha = 500;         // Reputation weight
 
+    // Owner-settable maximum fee for selecting oracles.
+    uint256 public maxFee;
+
     // Single Chainlink oracle info for front-end compatibility.
     address public chainlinkOracle;
     bytes32 public chainlinkJobId;
@@ -84,6 +87,8 @@ contract ReputationAggregator is ChainlinkClient, Ownable {
         requiredResponses = 3;
         clusterSize = 2;
         responseTimeoutSeconds = 5 minutes;
+        // Set a default maximum fee (e.g., 0.1 LINK)
+        maxFee = 0.1 * 10**18;
     }
 
     // ------------------------------------------------------------------------
@@ -100,6 +105,10 @@ contract ReputationAggregator is ChainlinkClient, Ownable {
 
     function getAlpha() external view returns (uint256) {
         return alpha;
+    }
+
+    function setMaxFee(uint256 _maxFee) external onlyOwner {
+        maxFee = _maxFee;
     }
 
     function setConfig(
@@ -143,8 +152,8 @@ contract ReputationAggregator is ChainlinkClient, Ownable {
         require(address(reputationKeeper) != address(0), "ReputationKeeper not set");
         require(cids.length > 0, "CIDs array must not be empty");
 
-        // Select oracles using the current alpha value.
-        ReputationKeeper.OracleIdentity[] memory selectedOracles = reputationKeeper.selectOracles(oraclesToPoll, alpha);
+        // Select oracles using the current alpha value and max fee constraint.
+        ReputationKeeper.OracleIdentity[] memory selectedOracles = reputationKeeper.selectOracles(oraclesToPoll, alpha, maxFee);
         reputationKeeper.recordUsedOracles(selectedOracles);
 
         // Concatenate the CIDs.

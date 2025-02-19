@@ -214,32 +214,33 @@ contract ReputationKeeper is Ownable {
     }
     
     /**
-     * @notice Select a list of oracle identities based on their weighted scores.
+     * @notice Select a list of oracle identities based on their weighted scores and fee constraint.
      * @param count The number of oracle identities to select.
      * @param alpha The weighting parameter.
+     * @param maxFee The maximum LINK fee allowed for an oracle.
      * @return An array of selected OracleIdentity structs.
      */
-    function selectOracles(uint256 count, uint256 alpha) external view returns (OracleIdentity[] memory) {
+    function selectOracles(uint256 count, uint256 alpha, uint256 maxFee) external view returns (OracleIdentity[] memory) {
         require(approvedContracts[msg.sender].isApproved, "Not approved to select oracles");
         
-        // Count active oracle identities.
+        // Count active oracle identities that satisfy fee requirement.
         uint256 activeCount = 0;
         for (uint256 i = 0; i < registeredOracles.length; i++) {
             OracleIdentity storage id = registeredOracles[i];
             bytes32 key = _oracleKey(id.oracle, id.jobId);
-            if (oracles[key].isActive) {
+            if (oracles[key].isActive && oracles[key].fee <= maxFee) {
                 activeCount++;
             }
         }
-        require(activeCount > 0, "No active oracles available");
+        require(activeCount > 0, "No active oracles available with fee <= maxFee");
         
-        // Build an array of active oracle identities.
+        // Build an array of active oracle identities meeting fee constraint.
         OracleIdentity[] memory activeOracles = new OracleIdentity[](activeCount);
         uint256 idx = 0;
         for (uint256 i = 0; i < registeredOracles.length; i++) {
             OracleIdentity storage id = registeredOracles[i];
             bytes32 key = _oracleKey(id.oracle, id.jobId);
-            if (oracles[key].isActive) {
+            if (oracles[key].isActive && oracles[key].fee <= maxFee) {
                 activeOracles[idx] = id;
                 idx++;
             }

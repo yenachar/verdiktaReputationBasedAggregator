@@ -30,6 +30,7 @@ module.exports = async function(callback) {
     // clusterSize: 2 (cluster size of two)
     // timeout: 300 seconds (5 minutes)
     await aggregator.setConfig(4, 3, 2, 300);
+    await aggregator.setMaxFee(web3.utils.toWei('0.08', 'ether'));
     console.log('Aggregator configured');
 
     // Approve aggregator to use keeper
