@@ -49,7 +49,7 @@ contract ReputationKeeper is Ownable {
     OracleIdentity[] public registeredOracles;
     
     uint256 public constant STAKE_REQUIREMENT = 100 * 10**18;  // 100 VDKA tokens
-    uint256 public constant MAX_SCORE_FOR_SELECTION = 100;
+    uint256 public constant MAX_SCORE_FOR_SELECTION = 400;
     uint256 public constant MIN_SCORE_FOR_SELECTION = 1;
     
     event OracleRegistered(address indexed oracle, bytes32 jobId, uint256 fee);

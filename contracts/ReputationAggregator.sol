@@ -371,7 +371,7 @@ contract ReputationAggregator is ChainlinkClient, Ownable {
                 if (found) {
                     if (clusterResults[selIndex] == 1) {
                         // Clustered: update scores and pay bonus.
-                        try reputationKeeper.updateScores(resp.operator, resp.jobId, int8(1), int8(1)) {
+                        try reputationKeeper.updateScores(resp.operator, resp.jobId, int8(4), int8(4)) {
                             // success
                         } catch {
                             emit OracleScoreUpdateSkipped(resp.operator, resp.jobId, "updateScores failed for clustered selected response");
@@ -384,7 +384,7 @@ contract ReputationAggregator is ChainlinkClient, Ownable {
                         return (true, 1);
                     } else {
                         // Selected but not clustered.
-                        try reputationKeeper.updateScores(resp.operator, resp.jobId, int8(-1), int8(0)) {
+                        try reputationKeeper.updateScores(resp.operator, resp.jobId, int8(-4), int8(0)) {
                             // success
                         } catch {
                             emit OracleScoreUpdateSkipped(resp.operator, resp.jobId, "updateScores failed for non-clustered selected response");
@@ -393,7 +393,8 @@ contract ReputationAggregator is ChainlinkClient, Ownable {
                     }
                 }
             } else {
-                try reputationKeeper.updateScores(resp.operator, resp.jobId, int8(0), int8(-1)) {
+                // not selected
+                try reputationKeeper.updateScores(resp.operator, resp.jobId, int8(0), int8(-4)) {
                     // success
                 } catch {
                     emit OracleScoreUpdateSkipped(resp.operator, resp.jobId, "updateScores failed for responded but not selected");
@@ -401,7 +402,8 @@ contract ReputationAggregator is ChainlinkClient, Ownable {
                 return (true, 0);
             }
         } else {
-            try reputationKeeper.updateScores(id.oracle, id.jobId, int8(0), int8(-1)) {
+            // never responded
+            try reputationKeeper.updateScores(id.oracle, id.jobId, int8(0), int8(-4)) {
                 // success
             } catch {
                 emit OracleScoreUpdateSkipped(id.oracle, id.jobId, "updateScores failed for no response");
