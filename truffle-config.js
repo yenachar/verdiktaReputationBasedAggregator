@@ -45,6 +45,8 @@ require('dotenv').config();
 // const { MNEMONIC, PROJECT_ID } = process.env;
 
 const HDWalletProvider = require('@truffle/hdwallet-provider');
+const https = require("https");
+const fetch = require("node-fetch");
 
 module.exports = {
   /**
@@ -90,14 +92,27 @@ module.exports = {
     //   skipDryRun: true     // Skip dry run before migrations? (default: false for public nets )
     // },
     base_sepolia: {
-	          provider: () => new HDWalletProvider(
-			  [
-			          process.env.PRIVATE_KEY,
-			          process.env.PRIVATE_KEY_2
-			  ], 
-			          //`https://base-sepolia.infura.io/v3/${process.env.INFURA_API_KEY}`
-			          `https://sepolia.base.org`
-			        ),
+
+
+      provider: () => {
+        // Create a custom HTTPS agent with keep-alive
+        const agent = new https.Agent({
+          keepAlive: true,
+          keepAliveMsecs: 60 * 1000 // Keep sockets around for 60 seconds
+        });
+
+        // Return an HDWalletProvider using the custom fetch that includes our agent
+        return new HDWalletProvider({
+          privateKeys: [
+            process.env.PRIVATE_KEY,
+            process.env.PRIVATE_KEY_2
+          ],
+          providerOrUrl: "https://sepolia.base.org",
+          // Override the default 'fetch' so it uses our custom agent
+          fetch: (url, options) => fetch(url, { ...options, agent })
+        });
+      },
+
 	          network_id: 84532,       // Base Sepolia network ID
 	          chain_id: 84532,         // Base Sepolia chain ID
 	          gas: 10000000,            // Gas limit
