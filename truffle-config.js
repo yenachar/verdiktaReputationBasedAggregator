@@ -107,7 +107,11 @@ module.exports = {
             process.env.PRIVATE_KEY,
             process.env.PRIVATE_KEY_2
           ],
-          providerOrUrl: "https://sepolia.base.org",
+
+          // providerOrUrl: "https://sepolia.base.org",
+          // providerOrUrl: `https://sepolia.infura.io/v3/${process.env.INFURA_API_KEY}`,
+          providerOrUrl: `https://base-sepolia.infura.io/v3/${process.env.INFURA_API_KEY}`,
+	  
           // Override the default 'fetch' so it uses our custom agent
           fetch: (url, options) => fetch(url, { ...options, agent })
         });
