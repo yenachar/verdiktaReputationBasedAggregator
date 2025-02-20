@@ -21,6 +21,12 @@ contract ReputationKeeper is Ownable {
         bytes32 jobId;
     }
 
+    // A single record of (qualityScore, timelinessScore).
+    struct ScoreRecord {
+        int256 qualityScore;
+        int256 timelinessScore;
+    }
+
     // Information about each oracle identity.
     struct OracleInfo {
         int256 qualityScore;    // Score based on clustering accuracy
@@ -30,6 +36,9 @@ contract ReputationKeeper is Ownable {
         bytes32 jobId;          // The job ID (redundant but stored for convenience)
         uint256 fee;            // LINK fee required for this job
         uint256 callCount;      // Number of times this oracle has been called
+        
+        // Rolling array of the most recent scores
+        ScoreRecord[] recentScores;
     }
     
     // Per–contract usage data.
@@ -48,6 +57,9 @@ contract ReputationKeeper is Ownable {
     // List of all registered oracle identities.
     OracleIdentity[] public registeredOracles;
     
+    // The maximum number of historical score records to keep for each oracle
+    uint256 public maxScoreHistory = 10;
+
     uint256 public constant STAKE_REQUIREMENT = 100 * 10**18;  // 100 VDKA tokens
     uint256 public constant MAX_SCORE_FOR_SELECTION = 400;
     uint256 public constant MIN_SCORE_FOR_SELECTION = 1;
@@ -93,16 +105,16 @@ contract ReputationKeeper is Ownable {
         // Transfer the stake from the registering party.
         verdiktaToken.transferFrom(msg.sender, address(this), STAKE_REQUIREMENT);
         
-        // Store the oracle info under the composite key.
-        oracles[key] = OracleInfo({
-            qualityScore: 0,
-            timelinessScore: 0,
-            stakeAmount: STAKE_REQUIREMENT,
-            isActive: true,
-            jobId: _jobId,
-            fee: fee,
-            callCount: 0  // Initialize call count to zero
-        });
+        // Initialize the oracle info in storage.
+        OracleInfo storage info = oracles[key];
+        info.qualityScore = 0;
+        info.timelinessScore = 0;
+        info.stakeAmount = STAKE_REQUIREMENT;
+        info.isActive = true;
+        info.jobId = _jobId;
+        info.fee = fee;
+        info.callCount = 0;
+        // Note: info.recentScores is automatically an empty dynamic array.
         
         // Only push the OracleIdentity if one doesn't already exist.
         bool exists = false;
@@ -150,14 +162,18 @@ contract ReputationKeeper is Ownable {
      * @param _oracle The oracle’s address.
      * @param _jobId The Chainlink job ID.
      */
-    function getOracleInfo(address _oracle, bytes32 _jobId) external view returns (
-        bool isActive,
-        int256 qualityScore,
-        int256 timelinessScore,
-        uint256 callCount,
-        bytes32 jobId,
-        uint256 fee
-    ) {
+    function getOracleInfo(address _oracle, bytes32 _jobId)
+        external
+        view
+        returns (
+            bool isActive,
+            int256 qualityScore,
+            int256 timelinessScore,
+            uint256 callCount,
+            bytes32 jobId,
+            uint256 fee
+        )
+    {
         bytes32 key = _oracleKey(_oracle, _jobId);
         OracleInfo storage info = oracles[key];
         return (
@@ -187,11 +203,31 @@ contract ReputationKeeper is Ownable {
         require(approvedContracts[msg.sender].usedOracles[key], "Oracle not used by this contract");
         
         // Increment call count since the oracle is being used.
-        oracles[key].callCount++;
-        oracles[key].qualityScore += qualityChange;
-        oracles[key].timelinessScore += timelinessChange;
+        OracleInfo storage info = oracles[key];
+        info.callCount++;
         
-        emit ScoreUpdated(_oracle, oracles[key].qualityScore, oracles[key].timelinessScore);
+        // Update the "current" scores.
+        info.qualityScore += qualityChange;
+        info.timelinessScore += timelinessChange;
+
+        // Push the new (updated) scores into the rolling history.
+        info.recentScores.push(
+            ScoreRecord({
+                qualityScore: info.qualityScore,
+                timelinessScore: info.timelinessScore
+            })
+        );
+
+        // If we've exceeded maxScoreHistory, remove the oldest entry (index 0).
+        if (info.recentScores.length > maxScoreHistory) {
+            // Shift elements left by 1 and then pop the last element.
+            for (uint256 i = 0; i < info.recentScores.length - 1; i++) {
+                info.recentScores[i] = info.recentScores[i + 1];
+            }
+            info.recentScores.pop();
+        }
+        
+        emit ScoreUpdated(_oracle, info.qualityScore, info.timelinessScore);
     }
     
     /**
@@ -305,6 +341,36 @@ contract ReputationKeeper is Ownable {
             bytes32 key = _oracleKey(_oracleIdentities[i].oracle, _oracleIdentities[i].jobId);
             approvedContracts[msg.sender].usedOracles[key] = true;
         }
+    }
+
+    /**
+     * @notice Owner can change how many historical scores we keep for each oracle.
+     * @param _maxScoreHistory New maximum length of the rolling score history.
+     */
+    function setMaxScoreHistory(uint256 _maxScoreHistory) external onlyOwner {
+        require(_maxScoreHistory > 0, "maxScoreHistory must be > 0");
+        maxScoreHistory = _maxScoreHistory;
+    }
+
+    /**
+     * @notice Fetch the rolling history of the most recent scores for a given oracle.
+     * @param _oracle The oracle’s address.
+     * @param _jobId The Chainlink job ID.
+     * @return Array of ScoreRecord structs (up to maxScoreHistory in length).
+     */
+    function getRecentScores(address _oracle, bytes32 _jobId)
+        external
+        view
+        returns (ScoreRecord[] memory)
+    {
+        bytes32 key = _oracleKey(_oracle, _jobId);
+        OracleInfo storage info = oracles[key];
+        uint256 len = info.recentScores.length;
+        ScoreRecord[] memory scores = new ScoreRecord[](len);
+        for (uint256 i = 0; i < len; i++) {
+            scores[i] = info.recentScores[i];
+        }
+        return scores;
     }
 }
 
