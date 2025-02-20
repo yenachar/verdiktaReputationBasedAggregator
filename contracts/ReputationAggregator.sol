@@ -144,6 +144,11 @@ contract ReputationAggregator is ChainlinkClient, Ownable {
         chainlinkFee = 0.1 * 10**18; // e.g., 0.1 LINK
     }
 
+    // Set reputationKeeper.
+    function setReputationKeeper(address _reputationKeeper) external onlyOwner {
+        reputationKeeper = ReputationKeeper(_reputationKeeper);
+    }
+
     // Debug function.
     function emitDebug1() external {
         uint256 linkBalance = LinkTokenInterface(_chainlinkTokenAddress()).balanceOf(address(this));
@@ -371,7 +376,7 @@ contract ReputationAggregator is ChainlinkClient, Ownable {
                 if (found) {
                     if (clusterResults[selIndex] == 1) {
                         // Clustered: update scores and pay bonus.
-                        try reputationKeeper.updateScores(resp.operator, resp.jobId, int8(4), int8(4)) {
+                        try reputationKeeper.updateScores(aggEval.polledOracles[slot].oracle, resp.jobId, int8(4), int8(4)) {
                             // success
                         } catch {
                             emit OracleScoreUpdateSkipped(resp.operator, resp.jobId, "updateScores failed for clustered selected response");
@@ -384,7 +389,7 @@ contract ReputationAggregator is ChainlinkClient, Ownable {
                         return (true, 1);
                     } else {
                         // Selected but not clustered.
-                        try reputationKeeper.updateScores(resp.operator, resp.jobId, int8(-4), int8(0)) {
+                        try reputationKeeper.updateScores(aggEval.polledOracles[slot].oracle, resp.jobId, int8(-4), int8(0)) {
                             // success
                         } catch {
                             emit OracleScoreUpdateSkipped(resp.operator, resp.jobId, "updateScores failed for non-clustered selected response");
@@ -394,7 +399,7 @@ contract ReputationAggregator is ChainlinkClient, Ownable {
                 }
             } else {
                 // not selected
-                try reputationKeeper.updateScores(resp.operator, resp.jobId, int8(0), int8(-4)) {
+                try reputationKeeper.updateScores(aggEval.polledOracles[slot].oracle, resp.jobId, int8(0), int8(-4)) {
                     // success
                 } catch {
                     emit OracleScoreUpdateSkipped(resp.operator, resp.jobId, "updateScores failed for responded but not selected");
