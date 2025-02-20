@@ -20,6 +20,11 @@ module.exports = async function(deployer, network) {
   await reputationKeeper.approveContract(reputationAggregator.address);
   console.log("ReputationAggregator approved in ReputationKeeper");
 
+  // Connect aggregator (after deploying ReputationKeeper):
+  await reputationAggregator.setReputationKeeper(reputationKeeper.address);
+  console.log("ReputationAggregator updated with ReputationKeeper address");
+
+
   // If ReputationAggregator provides a setter function to update its ReputationKeeper,
   // update it now. For example:
   //
