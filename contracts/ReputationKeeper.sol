@@ -67,10 +67,10 @@ contract ReputationKeeper is Ownable {
     uint256 public constant MIN_SCORE_FOR_SELECTION = 1;
     
     // Configuration for slashing and locking.
-    uint256 public slashAmountConfig = 10 * 10**18;  // 10 VDKA tokens (default)
-    uint256 public lockDurationConfig = 2 hours;       // Lock period (default 2 hours)
-    int256 public severeThreshold = -40;               // Severe threshold (default -40)
-    int256 public mildThreshold = -20;                 // Mild threshold (default -20)
+    uint256 public slashAmountConfig = 10 * 10**18;  // 10 VDKA tokens (configurable)
+    uint256 public lockDurationConfig = 2 hours;       // Lock period (configurable)
+    int256 public severeThreshold = -40;               // Severe threshold (configurable)
+    int256 public mildThreshold = -20;                 // Mild threshold (configurable)
     
     event OracleRegistered(address indexed oracle, bytes32 jobId, uint256 fee);
     event OracleDeregistered(address indexed oracle, bytes32 jobId);
@@ -192,6 +192,7 @@ contract ReputationKeeper is Ownable {
      * @notice Update reputation scores for an oracle identity.
      * After updating the scores, this function checks for conditions to trigger
      * a lock (preventing unregistration) and, in severe cases, a slash and block.
+     * It also checks if the full history (maxScoreHistory records) shows a monotonic worsening.
      */
     function updateScores(
         address _oracle, 
@@ -223,21 +224,46 @@ contract ReputationKeeper is Ownable {
         if (block.timestamp >= info.lockedUntil) {
             // Severe penalty: if either score is below the severe threshold.
             if (info.qualityScore < severeThreshold || info.timelinessScore < severeThreshold) {
-                // Slash the stake (ensure it does not underflow).
                 if (info.stakeAmount >= slashAmountConfig) {
                     info.stakeAmount -= slashAmountConfig;
                 } else {
                     info.stakeAmount = 0;
                 }
                 info.lockedUntil = block.timestamp + lockDurationConfig;
-                info.blocked = true; // Block oracle from being selected.
+                info.blocked = true;
                 emit OracleSlashed(_oracle, _jobId, slashAmountConfig, info.lockedUntil, true);
             }
             // Mild penalty: if either score is below the mild threshold (but not below severe).
             else if (info.qualityScore < mildThreshold || info.timelinessScore < mildThreshold) {
                 info.lockedUntil = block.timestamp + lockDurationConfig;
-                info.blocked = false; // Not blocked, so oracle can still be selected.
+                info.blocked = false;
                 emit OracleSlashed(_oracle, _jobId, 0, info.lockedUntil, false);
+            }
+        }
+        
+        // Check for full history monotonic worsening.
+        if (info.recentScores.length == maxScoreHistory) {
+            bool qualityWorsening = true;
+            bool timelinessWorsening = true;
+            for (uint256 i = 1; i < maxScoreHistory; i++) {
+                if (info.recentScores[i].qualityScore >= info.recentScores[i - 1].qualityScore) {
+                    qualityWorsening = false;
+                }
+                if (info.recentScores[i].timelinessScore >= info.recentScores[i - 1].timelinessScore) {
+                    timelinessWorsening = false;
+                }
+            }
+            if (qualityWorsening || timelinessWorsening) {
+                if (info.stakeAmount >= slashAmountConfig) {
+                    info.stakeAmount -= slashAmountConfig;
+                } else {
+                    info.stakeAmount = 0;
+                }
+                info.lockedUntil = block.timestamp + lockDurationConfig;
+                info.blocked = true;
+                emit OracleSlashed(_oracle, _jobId, slashAmountConfig, info.lockedUntil, true);
+                // Clear the history so we don't apply this penalty repeatedly on the same data.
+                delete info.recentScores;
             }
         }
         
