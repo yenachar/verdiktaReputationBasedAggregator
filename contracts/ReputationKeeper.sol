@@ -36,9 +36,11 @@ contract ReputationKeeper is Ownable {
         bytes32 jobId;          // The job ID (redundant but stored for convenience)
         uint256 fee;            // LINK fee required for this job
         uint256 callCount;      // Number of times this oracle has been called
+        ScoreRecord[] recentScores; // Rolling history of scores
         
-        // Rolling array of the most recent scores
-        ScoreRecord[] recentScores;
+        // New fields for slashing/locking:
+        uint256 lockedUntil;    // Timestamp until which the oracle is locked (cannot be unregistered)
+        bool blocked;           // If true, oracle is blocked from selection
     }
     
     // Per–contract usage data.
@@ -57,16 +59,23 @@ contract ReputationKeeper is Ownable {
     // List of all registered oracle identities.
     OracleIdentity[] public registeredOracles;
     
-    // The maximum number of historical score records to keep for each oracle
+    // The maximum number of historical score records to keep for each oracle.
     uint256 public maxScoreHistory = 10;
 
     uint256 public constant STAKE_REQUIREMENT = 100 * 10**18;  // 100 VDKA tokens
     uint256 public constant MAX_SCORE_FOR_SELECTION = 400;
     uint256 public constant MIN_SCORE_FOR_SELECTION = 1;
     
+    // Configuration for slashing and locking.
+    uint256 public slashAmountConfig = 10 * 10**18;  // 10 VDKA tokens (default)
+    uint256 public lockDurationConfig = 2 hours;       // Lock period (default 2 hours)
+    int256 public severeThreshold = -40;               // Severe threshold (default -40)
+    int256 public mildThreshold = -20;                 // Mild threshold (default -20)
+    
     event OracleRegistered(address indexed oracle, bytes32 jobId, uint256 fee);
     event OracleDeregistered(address indexed oracle, bytes32 jobId);
     event ScoreUpdated(address indexed oracle, int256 newQualityScore, int256 newTimelinessScore);
+    event OracleSlashed(address indexed oracle, bytes32 jobId, uint256 slashAmount, uint256 lockedUntil, bool blocked);
     event ContractApproved(address indexed contractAddress);
     event ContractRemoved(address indexed contractAddress);
     
@@ -81,22 +90,12 @@ contract ReputationKeeper is Ownable {
     
     /**
      * @notice Register an oracle under a specific job ID.
-     * @param _oracle The oracle’s address.
-     * @param _jobId The Chainlink job ID.
-     * @param fee The LINK fee for this job.
-     *
-     * Requirements:
-     * - The oracle must not already be registered.
-     * - The fee must be greater than 0.
-     * - The caller must be either the owner of this ReputationKeeper or the owner of the oracle contract.
-     * - The caller must have approved this contract to transfer the required stake.
      */
     function registerOracle(address _oracle, bytes32 _jobId, uint256 fee) external {
         bytes32 key = _oracleKey(_oracle, _jobId);
         require(!oracles[key].isActive, "Oracle already registered");
         require(fee > 0, "Fee must be greater than 0");
         
-        // Allow registration if the caller is either the owner of this contract or the owner of the oracle.
         require(
             msg.sender == owner() || msg.sender == IOracleOwner(_oracle).owner(),
             "Not authorized to register oracle"
@@ -105,7 +104,7 @@ contract ReputationKeeper is Ownable {
         // Transfer the stake from the registering party.
         verdiktaToken.transferFrom(msg.sender, address(this), STAKE_REQUIREMENT);
         
-        // Initialize the oracle info in storage.
+        // Initialize the oracle info.
         OracleInfo storage info = oracles[key];
         info.qualityScore = 0;
         info.timelinessScore = 0;
@@ -114,9 +113,10 @@ contract ReputationKeeper is Ownable {
         info.jobId = _jobId;
         info.fee = fee;
         info.callCount = 0;
-        // Note: info.recentScores is automatically an empty dynamic array.
+        info.lockedUntil = 0; // initially not locked
+        info.blocked = false; // initially not blocked
         
-        // Only push the OracleIdentity if one doesn't already exist.
+        // Record the identity if not already present.
         bool exists = false;
         for (uint256 i = 0; i < registeredOracles.length; i++) {
             if (registeredOracles[i].oracle == _oracle && registeredOracles[i].jobId == _jobId) {
@@ -133,34 +133,30 @@ contract ReputationKeeper is Ownable {
     
     /**
      * @notice Deregister an oracle identity.
-     * @param _oracle The oracle’s address.
-     * @param _jobId The Chainlink job ID.
-     *
      * Requirements:
-     * - The oracle must be currently registered.
-     * - The caller must be either the owner of this ReputationKeeper or the owner of the oracle contract.
+     * - The oracle must not be locked (i.e. block.timestamp must be past lockedUntil).
      */
     function deregisterOracle(address _oracle, bytes32 _jobId) external {
         bytes32 key = _oracleKey(_oracle, _jobId);
-        require(oracles[key].isActive, "Oracle not registered");
+        OracleInfo storage info = oracles[key];
+        require(info.isActive, "Oracle not registered");
         require(
             msg.sender == owner() || msg.sender == IOracleOwner(_oracle).owner(),
             "Not authorized to deregister oracle"
         );
+        require(block.timestamp >= info.lockedUntil, "Oracle is locked and cannot be unregistered");
         
-        // Return the staked tokens to the caller.
-        verdiktaToken.transfer(msg.sender, oracles[key].stakeAmount);
+        // Return the staked tokens.
+        verdiktaToken.transfer(msg.sender, info.stakeAmount);
         
-        oracles[key].stakeAmount = 0;
-        oracles[key].isActive = false;
+        info.stakeAmount = 0;
+        info.isActive = false;
         
         emit OracleDeregistered(_oracle, _jobId);
     }
     
     /**
      * @notice Retrieve an oracle identity’s info.
-     * @param _oracle The oracle’s address.
-     * @param _jobId The Chainlink job ID.
      */
     function getOracleInfo(address _oracle, bytes32 _jobId)
         external
@@ -171,7 +167,10 @@ contract ReputationKeeper is Ownable {
             int256 timelinessScore,
             uint256 callCount,
             bytes32 jobId,
-            uint256 fee
+            uint256 fee,
+            uint256 stakeAmount,
+            uint256 lockedUntil,
+            bool blocked
         )
     {
         bytes32 key = _oracleKey(_oracle, _jobId);
@@ -182,16 +181,17 @@ contract ReputationKeeper is Ownable {
             info.timelinessScore,
             info.callCount,
             info.jobId,
-            info.fee
+            info.fee,
+            info.stakeAmount,
+            info.lockedUntil,
+            info.blocked
         );
     }
     
     /**
      * @notice Update reputation scores for an oracle identity.
-     * @param _oracle The oracle’s address.
-     * @param _jobId The Chainlink job ID.
-     * @param qualityChange The change to the quality score.
-     * @param timelinessChange The change to the timeliness score.
+     * After updating the scores, this function checks for conditions to trigger
+     * a lock (preventing unregistration) and, in severe cases, a slash and block.
      */
     function updateScores(
         address _oracle, 
@@ -202,29 +202,43 @@ contract ReputationKeeper is Ownable {
         bytes32 key = _oracleKey(_oracle, _jobId);
         require(approvedContracts[msg.sender].usedOracles[key], "Oracle not used by this contract");
         
-        // Increment call count since the oracle is being used.
         OracleInfo storage info = oracles[key];
         info.callCount++;
-        
-        // Update the "current" scores.
         info.qualityScore += qualityChange;
         info.timelinessScore += timelinessChange;
 
-        // Push the new (updated) scores into the rolling history.
-        info.recentScores.push(
-            ScoreRecord({
-                qualityScore: info.qualityScore,
-                timelinessScore: info.timelinessScore
-            })
-        );
-
-        // If we've exceeded maxScoreHistory, remove the oldest entry (index 0).
+        // Record score history.
+        info.recentScores.push(ScoreRecord({
+            qualityScore: info.qualityScore,
+            timelinessScore: info.timelinessScore
+        }));
         if (info.recentScores.length > maxScoreHistory) {
-            // Shift elements left by 1 and then pop the last element.
             for (uint256 i = 0; i < info.recentScores.length - 1; i++) {
                 info.recentScores[i] = info.recentScores[i + 1];
             }
             info.recentScores.pop();
+        }
+        
+        // Only apply a new lock/penalty if any previous lock has expired.
+        if (block.timestamp >= info.lockedUntil) {
+            // Severe penalty: if either score is below the severe threshold.
+            if (info.qualityScore < severeThreshold || info.timelinessScore < severeThreshold) {
+                // Slash the stake (ensure it does not underflow).
+                if (info.stakeAmount >= slashAmountConfig) {
+                    info.stakeAmount -= slashAmountConfig;
+                } else {
+                    info.stakeAmount = 0;
+                }
+                info.lockedUntil = block.timestamp + lockDurationConfig;
+                info.blocked = true; // Block oracle from being selected.
+                emit OracleSlashed(_oracle, _jobId, slashAmountConfig, info.lockedUntil, true);
+            }
+            // Mild penalty: if either score is below the mild threshold (but not below severe).
+            else if (info.qualityScore < mildThreshold || info.timelinessScore < mildThreshold) {
+                info.lockedUntil = block.timestamp + lockDurationConfig;
+                info.blocked = false; // Not blocked, so oracle can still be selected.
+                emit OracleSlashed(_oracle, _jobId, 0, info.lockedUntil, false);
+            }
         }
         
         emit ScoreUpdated(_oracle, info.qualityScore, info.timelinessScore);
@@ -232,18 +246,14 @@ contract ReputationKeeper is Ownable {
     
     /**
      * @notice Calculate the weighted selection score for an oracle identity.
-     * @param _oracle The oracle’s address.
-     * @param _jobId The Chainlink job ID.
-     * @param alpha Weighting factor (0–1000).
+     * Oracles that are blocked (and still within the lock period) are treated as having a score of 0.
      */
     function getSelectionScore(address _oracle, bytes32 _jobId, uint256 alpha) public view returns (uint256) {
         bytes32 key = _oracleKey(_oracle, _jobId);
-        if (!oracles[key].isActive) return 0;
+        OracleInfo storage info = oracles[key];
+        if (info.isActive && info.blocked && block.timestamp < info.lockedUntil) return 0;
         
-        // Compute weighted score.
-        int256 weightedScore = (int256(1000 - alpha) * oracles[key].qualityScore +
-                                int256(alpha) * oracles[key].timelinessScore) / 1000;
-        
+        int256 weightedScore = (int256(1000 - alpha) * info.qualityScore + int256(alpha) * info.timelinessScore) / 1000;
         if (weightedScore < int256(MIN_SCORE_FOR_SELECTION)) return MIN_SCORE_FOR_SELECTION;
         if (weightedScore > int256(MAX_SCORE_FOR_SELECTION)) return MAX_SCORE_FOR_SELECTION;
         return uint256(weightedScore);
@@ -251,38 +261,38 @@ contract ReputationKeeper is Ownable {
     
     /**
      * @notice Select a list of oracle identities based on their weighted scores and fee constraint.
-     * @param count The number of oracle identities to select.
-     * @param alpha The weighting parameter.
-     * @param maxFee The maximum LINK fee allowed for an oracle.
-     * @return An array of selected OracleIdentity structs.
+     * Oracles that are currently blocked (and locked) are excluded.
      */
     function selectOracles(uint256 count, uint256 alpha, uint256 maxFee) external view returns (OracleIdentity[] memory) {
         require(approvedContracts[msg.sender].isApproved, "Not approved to select oracles");
         
-        // Count active oracle identities that satisfy fee requirement.
         uint256 activeCount = 0;
         for (uint256 i = 0; i < registeredOracles.length; i++) {
             OracleIdentity storage id = registeredOracles[i];
             bytes32 key = _oracleKey(id.oracle, id.jobId);
-            if (oracles[key].isActive && oracles[key].fee <= maxFee) {
+            if (oracles[key].isActive &&
+                oracles[key].fee <= maxFee &&
+                (!(oracles[key].blocked && block.timestamp < oracles[key].lockedUntil))
+            ) {
                 activeCount++;
             }
         }
         require(activeCount > 0, "No active oracles available with fee <= maxFee");
         
-        // Build an array of active oracle identities meeting fee constraint.
         OracleIdentity[] memory activeOracles = new OracleIdentity[](activeCount);
         uint256 idx = 0;
         for (uint256 i = 0; i < registeredOracles.length; i++) {
             OracleIdentity storage id = registeredOracles[i];
             bytes32 key = _oracleKey(id.oracle, id.jobId);
-            if (oracles[key].isActive && oracles[key].fee <= maxFee) {
+            if (oracles[key].isActive &&
+                oracles[key].fee <= maxFee &&
+                (!(oracles[key].blocked && block.timestamp < oracles[key].lockedUntil))
+            ) {
                 activeOracles[idx] = id;
                 idx++;
             }
         }
         
-        // Compute weights.
         uint256 totalWeight = 0;
         uint256[] memory weights = new uint256[](activeCount);
         for (uint256 i = 0; i < activeCount; i++) {
@@ -290,7 +300,6 @@ contract ReputationKeeper is Ownable {
             totalWeight += weights[i];
         }
         
-        // Select oracle identities using weighted random selection.
         OracleIdentity[] memory selectedOracles = new OracleIdentity[](count);
         for (uint256 i = 0; i < count; i++) {
             uint256 seed = uint256(keccak256(abi.encodePacked(block.timestamp, block.prevrandao, i)));
@@ -303,7 +312,6 @@ contract ReputationKeeper is Ownable {
                     break;
                 }
             }
-            // Fallback: if no selection, default to the first active oracle.
             if (selectedOracles[i].oracle == address(0)) {
                 selectedOracles[i] = activeOracles[0];
             }
@@ -312,52 +320,29 @@ contract ReputationKeeper is Ownable {
         return selectedOracles;
     }
     
-    /**
-     * @notice Approve an external contract to use oracles.
-     * @param contractAddress The address of the contract to approve.
-     */
     function approveContract(address contractAddress) external onlyOwner {
         approvedContracts[contractAddress].isApproved = true;
         emit ContractApproved(contractAddress);
     }
     
-    /**
-     * @notice Remove an external contract’s approval.
-     * @param contractAddress The address of the contract to remove.
-     */
     function removeContract(address contractAddress) external onlyOwner {
         approvedContracts[contractAddress].isApproved = false;
         emit ContractRemoved(contractAddress);
     }
     
-    /**
-     * @notice Record that an approved contract has used a set of oracle identities.
-     * @param _oracleIdentities The array of oracle identities used.
-     */
     function recordUsedOracles(OracleIdentity[] calldata _oracleIdentities) external {
         require(approvedContracts[msg.sender].isApproved, "Not approved to record oracles");
-        
         for (uint256 i = 0; i < _oracleIdentities.length; i++) {
             bytes32 key = _oracleKey(_oracleIdentities[i].oracle, _oracleIdentities[i].jobId);
             approvedContracts[msg.sender].usedOracles[key] = true;
         }
     }
-
-    /**
-     * @notice Owner can change how many historical scores we keep for each oracle.
-     * @param _maxScoreHistory New maximum length of the rolling score history.
-     */
+    
     function setMaxScoreHistory(uint256 _maxScoreHistory) external onlyOwner {
         require(_maxScoreHistory > 0, "maxScoreHistory must be > 0");
         maxScoreHistory = _maxScoreHistory;
     }
-
-    /**
-     * @notice Fetch the rolling history of the most recent scores for a given oracle.
-     * @param _oracle The oracle’s address.
-     * @param _jobId The Chainlink job ID.
-     * @return Array of ScoreRecord structs (up to maxScoreHistory in length).
-     */
+    
     function getRecentScores(address _oracle, bytes32 _jobId)
         external
         view
@@ -371,6 +356,23 @@ contract ReputationKeeper is Ownable {
             scores[i] = info.recentScores[i];
         }
         return scores;
+    }
+    
+    // Owner setters for slashing configuration.
+    function setSlashAmount(uint256 _slashAmount) external onlyOwner {
+        slashAmountConfig = _slashAmount;
+    }
+    
+    function setLockDuration(uint256 _lockDuration) external onlyOwner {
+        lockDurationConfig = _lockDuration;
+    }
+    
+    function setSevereThreshold(int256 _threshold) external onlyOwner {
+        severeThreshold = _threshold;
+    }
+    
+    function setMildThreshold(int256 _threshold) external onlyOwner {
+        mildThreshold = _threshold;
     }
 }
 
