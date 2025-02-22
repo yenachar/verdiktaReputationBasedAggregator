@@ -1,5 +1,5 @@
 // scripts/register-oracle.js
-// Registers one or more jobs associated with a single oracle address.
+// Registers one or more jobs associated with a single oracle address using information in artifacts.
 const VerdiktaToken = artifacts.require("VerdiktaToken");
 const ReputationKeeper = artifacts.require("ReputationKeeper");
 const ReputationAggregator = artifacts.require("ReputationAggregator");
