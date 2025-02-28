@@ -353,69 +353,88 @@ contract ReputationAggregator is ChainlinkClient, Ownable {
     // Returns (processed, updateCluster) where updateCluster is 1 if the response
     // for this slot is in the best cluster (and a bonus fee is paid).
     // ------------------------------------------------------------------------
-    function _processPollSlot(
-        AggregatedEvaluation storage aggEval,
-        uint256 slot,
-        uint256[] memory selectedResponseIndices,
-        uint256[] memory clusterResults
-    ) internal returns (bool processed, uint256 updateCluster) {
-        ReputationKeeper.OracleIdentity memory id = aggEval.polledOracles[slot];
-        // Check if the oracle is active.
-        (bool isActive, , , , , , , , ) = reputationKeeper.getOracleInfo(id.oracle, id.jobId);
-        if (!isActive) {
-            emit OracleScoreUpdateSkipped(id.oracle, id.jobId, "Inactive at finalization");
-            return (false, 0);
-        }
-        // Check if a response exists for this slot.
-        (bool responded, uint256 respIndex) = _getResponseForSlot(aggEval.responses, slot);
-        if (responded) {
-            Response memory resp = aggEval.responses[respIndex];
-            if (resp.selected) {
-                // Find the index of this response in the selectedResponseIndices array.
-                (bool found, uint256 selIndex) = _findIndexInArray(selectedResponseIndices, respIndex);
-                if (found) {
-                    if (clusterResults[selIndex] == 1) {
-                        // Clustered: update scores and pay bonus.
-                        try reputationKeeper.updateScores(aggEval.polledOracles[slot].oracle, resp.jobId, int8(4), int8(4)) {
-                            // success
-                        } catch {
-                            emit OracleScoreUpdateSkipped(resp.operator, resp.jobId, "updateScores failed for clustered selected response");
-                        }
-                        // BONUS PAYMENT: transfer extra fee equal to the original fee.
-                        uint256 bonusFee = aggEval.pollFees[slot];
-                        LinkTokenInterface link = LinkTokenInterface(_chainlinkTokenAddress());
-                        require(link.transfer(resp.operator, bonusFee), "Bonus fee transfer failed");
-                        emit BonusPayment(resp.operator, bonusFee);
-                        return (true, 1);
-                    } else {
-                        // Selected but not clustered.
-                        try reputationKeeper.updateScores(aggEval.polledOracles[slot].oracle, resp.jobId, int8(-4), int8(0)) {
-                            // success
-                        } catch {
-                            emit OracleScoreUpdateSkipped(resp.operator, resp.jobId, "updateScores failed for non-clustered selected response");
-                        }
-                        return (true, 0);
+
+// Define a new debug event for bonus fee transfer details.
+event DebugBonusTransfer(
+    address indexed operator,
+    uint256 bonusFee,
+    uint256 balanceBefore,
+    uint256 balanceAfter,
+    bool success
+);
+
+function _processPollSlot(
+    AggregatedEvaluation storage aggEval,
+    uint256 slot,
+    uint256[] memory selectedResponseIndices,
+    uint256[] memory clusterResults
+) internal returns (bool processed, uint256 updateCluster) {
+    ReputationKeeper.OracleIdentity memory id = aggEval.polledOracles[slot];
+    // Check if the oracle is active.
+    (bool isActive, , , , , , , , ) = reputationKeeper.getOracleInfo(id.oracle, id.jobId);
+    if (!isActive) {
+        emit OracleScoreUpdateSkipped(id.oracle, id.jobId, "Inactive at finalization");
+        return (false, 0);
+    }
+    // Check if a response exists for this slot.
+    (bool responded, uint256 respIndex) = _getResponseForSlot(aggEval.responses, slot);
+    if (responded) {
+        Response memory resp = aggEval.responses[respIndex];
+        if (resp.selected) {
+            // Find the index of this response in the selectedResponseIndices array.
+            (bool found, uint256 selIndex) = _findIndexInArray(selectedResponseIndices, respIndex);
+            if (found) {
+                if (clusterResults[selIndex] == 1) {
+                    // Clustered: update scores and pay bonus.
+                    try reputationKeeper.updateScores(aggEval.polledOracles[slot].oracle, resp.jobId, int8(4), int8(4)) {
+                        // success
+                    } catch {
+                        emit OracleScoreUpdateSkipped(resp.operator, resp.jobId, "updateScores failed for clustered selected response");
                     }
+                    // BONUS PAYMENT: transfer extra fee equal to the original fee.
+                    uint256 bonusFee = aggEval.pollFees[slot];
+                    LinkTokenInterface link = LinkTokenInterface(_chainlinkTokenAddress());
+                    uint256 balanceBefore = link.balanceOf(address(this));
+                    bool transferSuccess = link.transfer(resp.operator, bonusFee);
+                    uint256 balanceAfter = link.balanceOf(address(this));
+                    emit DebugBonusTransfer(resp.operator, bonusFee, balanceBefore, balanceAfter, transferSuccess);
+                    if (!transferSuccess) {
+                        // Log failure and revert with a custom message.
+                        revert("Bonus fee transfer failed");
+                    }
+                    emit BonusPayment(resp.operator, bonusFee);
+                    return (true, 1);
+                } else {
+                    // Selected but not clustered.
+                    try reputationKeeper.updateScores(aggEval.polledOracles[slot].oracle, resp.jobId, int8(-4), int8(0)) {
+                        // success
+                    } catch {
+                        emit OracleScoreUpdateSkipped(resp.operator, resp.jobId, "updateScores failed for non-clustered selected response");
+                    }
+                    return (true, 0);
                 }
-            } else {
-                // not selected
-                try reputationKeeper.updateScores(aggEval.polledOracles[slot].oracle, resp.jobId, int8(0), int8(-4)) {
-                    // success
-                } catch {
-                    emit OracleScoreUpdateSkipped(resp.operator, resp.jobId, "updateScores failed for responded but not selected");
-                }
-                return (true, 0);
             }
         } else {
-            // never responded
-            try reputationKeeper.updateScores(id.oracle, id.jobId, int8(0), int8(-4)) {
+            // not selected
+            try reputationKeeper.updateScores(aggEval.polledOracles[slot].oracle, resp.jobId, int8(0), int8(-4)) {
                 // success
             } catch {
-                emit OracleScoreUpdateSkipped(id.oracle, id.jobId, "updateScores failed for no response");
+                emit OracleScoreUpdateSkipped(resp.operator, resp.jobId, "updateScores failed for responded but not selected");
             }
             return (true, 0);
         }
+    } else {
+        // never responded
+        try reputationKeeper.updateScores(id.oracle, id.jobId, int8(0), int8(-4)) {
+            // success
+        } catch {
+            emit OracleScoreUpdateSkipped(id.oracle, id.jobId, "updateScores failed for no response");
+        }
+        return (true, 0);
     }
+}
+
+
 
     // ------------------------------------------------------------------------
     // Helper: Find a response for a given poll slot.
