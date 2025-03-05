@@ -34,8 +34,8 @@ module.exports = {
       },
       network_id: 11155111,  // Sepolia network ID
       chain_id: 11155111,    // Sepolia chain ID
-      gas: 5500000,
-      gasPrice: 5000000000,  // 5 gwei
+      gas: 18500000,
+      gasPrice: 15000000000,  // 15 gwei
       confirmations: 2,
       timeoutBlocks: 200,
       networkCheckTimeout: 30000,

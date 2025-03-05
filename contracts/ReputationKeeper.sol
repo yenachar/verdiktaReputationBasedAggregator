@@ -400,5 +400,15 @@ contract ReputationKeeper is Ownable {
     function setMildThreshold(int256 _threshold) external onlyOwner {
         mildThreshold = _threshold;
     }
+
+/**
+ * @notice Updates the reference to the VerdiktaToken contract
+ * @param _newVerdiktaToken The address of the new VerdiktaToken contract
+ */
+function setVerdiktaToken(address _newVerdiktaToken) external onlyOwner {
+    require(_newVerdiktaToken != address(0), "Invalid token address");
+    verdiktaToken = VerdiktaToken(_newVerdiktaToken);
+}
+
 }
 
