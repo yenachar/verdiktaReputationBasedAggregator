@@ -1,15 +1,17 @@
 // scripts/unregister-oracle-cl.js
 // Unregisters one or more oracle identities (address/jobID combinations)
-// and reclaims the staked 100 VDKA tokens for each,
+// and reclaims the staked 100 wVDKA tokens for each,
 // using user-supplied contract addresses via command-line options.
 //
 // Usage example:
 // truffle exec scripts/unregister-oracle-cl.js \
 //   --aggregator 0xAggregatorAddress \
 //   --oracle 0xOracleAddress \
-//   --verdikta 0xVerdiktaTokenAddress \
+//   --wrappedverdikta 0xWrappedVerdiktaTokenAddress \
 //   --jobids "38f19572c51041baa5f2dea284614590" "39515f75ac2947beb7f2eeae4d8eaf3e" \
 //   --network your_network
+// Example:
+// truffle exec scripts/unregister-oracle-cl.js -a 0x69b601fC8263E9c55674E5973837062706608DF3 -w 0x6bF578606493b03026473F838bCD3e3b5bBa5515 -o 0xD67D6508D4E5611cd6a463Dd0969Fa153Be91101 --jobids "38f19572c51041baa5f2dea284614590" "39515f75ac2947beb7f2eeae4d8eaf3e" --network base_sepolia
 
 const yargs = require('yargs/yargs');
 const { hideBin } = require('yargs/helpers');
@@ -82,8 +84,8 @@ const ReputationKeeperABI = [
   }
 ];
 
-// VerdiktaToken: minimal function for balance checking.
-const VerdiktaTokenABI = [
+// WrappedVerdiktaToken: minimal function for balance checking.
+const WrappedVerdiktaTokenABI = [
   {
     "constant": true,
     "inputs": [{ "name": "account", "type": "address" }],
@@ -111,7 +113,7 @@ const minimalOwnerABI = [
 
 module.exports = async function(callback) {
   try {
-    console.log('Starting oracle deregistration and VDKA reclaim process...');
+    console.log('Starting oracle deregistration and wVDKA reclaim process...');
 
     const argv = yargs(hideBin(process.argv))
       .option('aggregator', {
@@ -124,10 +126,10 @@ module.exports = async function(callback) {
         type: 'string',
         description: 'Oracle contract address'
       })
-      .option('verdikta', {
-        alias: 'v',
+      .option('wrappedverdikta', {
+        alias: 'w',
         type: 'string',
-        description: 'VerdiktaToken contract address'
+        description: 'WrappedVerdiktaToken contract address'
       })
       .option('jobids', {
         alias: 'j',
@@ -135,8 +137,8 @@ module.exports = async function(callback) {
         description: 'Job ID strings (as an array)'
       })
       .demandOption(
-        ['aggregator', 'oracle', 'verdikta', 'jobids'],
-        'Please provide aggregator, oracle, verdikta addresses and at least one job id.'
+        ['aggregator', 'oracle', 'wrappedverdikta', 'jobids'],
+        'Please provide aggregator, oracle, wrappedverdikta addresses and at least one job id.'
       )
       .help()
       .argv;
@@ -154,8 +156,8 @@ module.exports = async function(callback) {
     // Instantiate the ReputationKeeper contract.
     const keeper = new web3.eth.Contract(ReputationKeeperABI, keeperAddress);
 
-    // Instantiate the VerdiktaToken contract.
-    const verdikta = new web3.eth.Contract(VerdiktaTokenABI, argv.verdikta);
+    // Instantiate the WrappedVerdiktaToken contract.
+    const wrappedVerdikta = new web3.eth.Contract(WrappedVerdiktaTokenABI, argv.wrappedverdikta);
 
     // Instantiate a minimal contract to fetch the oracle contract's owner.
     const oracleOwnerContract = new web3.eth.Contract(minimalOwnerABI, argv.oracle);
@@ -175,9 +177,9 @@ module.exports = async function(callback) {
       return callback(new Error("Not authorized"));
     }
 
-    // Check the caller's initial VDKA balance.
-    const initialBalance = await verdikta.methods.balanceOf(caller).call();
-    console.log('Initial VDKA balance:', initialBalance.toString());
+    // Check the caller's initial wVDKA balance.
+    const initialBalance = await wrappedVerdikta.methods.balanceOf(caller).call();
+    console.log('Initial wVDKA balance:', initialBalance.toString());
 
     // Process each job ID.
     const jobIdStrings = argv.jobids;
@@ -210,11 +212,11 @@ module.exports = async function(callback) {
       console.log(`Deregister transaction for jobID ${currentJobIdString} hash:`, tx.transactionHash || tx.tx);
     }
 
-    // Check the caller's final VDKA balance after reclaiming the stake(s).
-    const finalBalance = await verdikta.methods.balanceOf(caller).call();
-    console.log('Final VDKA balance:', finalBalance.toString());
+    // Check the caller's final wVDKA balance after reclaiming the stake(s).
+    const finalBalance = await wrappedVerdikta.methods.balanceOf(caller).call();
+    console.log('Final wVDKA balance:', finalBalance.toString());
 
-    console.log('Oracle deregistration and VDKA reclaim completed successfully.');
+    console.log('Oracle deregistration and wVDKA reclaim completed successfully.');
     callback();
   } catch (error) {
     console.error('Error during oracle deregistration:', error);
