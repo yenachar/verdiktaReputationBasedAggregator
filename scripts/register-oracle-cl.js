@@ -11,7 +11,7 @@
 //   --jobids "jobid1" "jobid2" --network your_network
 //   (Shortcuts, like -l instead of --link also works)
 //   Here is an example registering two jobIDs:
-//   truffle exec scripts/register-oracle-cl.js -a 0xF6b930bDC1b4b64080AA52fb6d4A5C7f9431a27a -l 0xE4aB69C077896252FAFBD49EFD26B5D171A32410 -w 0x6bF578606493b03026473F838bCD3e3b5bBa5515 -o 0xD67D6508D4E5611cd6a463Dd0969Fa153Be91101 --jobids "38f19572c51041baa5f2dea284614590" "39515f75ac2947beb7f2eeae4d8eaf3e" --network base_sepolia
+//   truffle exec scripts/register-oracle-cl.js -a 0x69b601fC8263E9c55674E5973837062706608DF3 -l 0xE4aB69C077896252FAFBD49EFD26B5D171A32410 -w 0x6bF578606493b03026473F838bCD3e3b5bBa5515 -o 0xD67D6508D4E5611cd6a463Dd0969Fa153Be91101 --jobids "38f19572c51041baa5f2dea284614590" "39515f75ac2947beb7f2eeae4d8eaf3e" --network base_sepolia
 
 const yargs = require('yargs/yargs');
 const { hideBin } = require('yargs/helpers');
