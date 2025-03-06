@@ -1,13 +1,13 @@
-// scripts/register-oracle.js
-// Registers one or more jobs associated with a single oracle address using information in artifacts.
-const VerdiktaToken = artifacts.require("VerdiktaToken");
+// scripts/register-oracle-base.js
+// Registers jobs with an oracle on Base Sepolia using the wrapped token
+const WrappedVerdiktaToken = artifacts.require("WrappedVerdiktaToken");
 const ReputationKeeper = artifacts.require("ReputationKeeper");
 const ReputationAggregator = artifacts.require("ReputationAggregator");
 const LinkTokenInterface = artifacts.require("LinkTokenInterface");
 
 module.exports = async function(callback) {
   try {
-    console.log('Starting oracle registration...');
+    console.log('Starting oracle registration on Base Sepolia...');
 
     // Get accounts
     const accounts = await web3.eth.getAccounts();
@@ -19,19 +19,15 @@ module.exports = async function(callback) {
     console.log('Registering oracle contract:', oracleAddress);
     
     // Define oracle details.
-    // Give array of jobId strings.
     const jobIdStrings = [
       "38f19572c51041baa5f2dea284614590",
       "39515f75ac2947beb7f2eeae4d8eaf3e"
-      // Add additional jobId strings as needed, e.g.:
-      // "anotherjobidstringhere",
-      // "yetanotherjobidstring"
     ];
     const linkFee = "50000000000000000"; // 0.05 LINK (18 decimals)
-    const vdkaStake = "100000000000000000000"; // 100 VDKA (18 decimals)
+    const vdkaStake = "100000000000000000000"; // 100 wVDKA (18 decimals)
 
-    // Get deployed contracts
-    const verdikta = await VerdiktaToken.deployed();
+    // Get deployed contracts - only changed VerdiktaToken to WrappedVerdiktaToken
+    const verdikta = await WrappedVerdiktaToken.deployed();
     const keeper = await ReputationKeeper.deployed();
 
     // Loop over each jobId and register it if not already active
@@ -56,29 +52,29 @@ module.exports = async function(callback) {
       } else {
         // Log addresses for verification
         console.log('Using contracts:');
-        console.log('VerdiktaToken:', verdikta.address);
+        console.log('WrappedVerdiktaToken:', verdikta.address);
         console.log('ReputationKeeper:', keeper.address);
 
         // Check VDKA balance
         const balance = await verdikta.balanceOf(owner);
-        console.log('VDKA Balance:', balance.toString());
+        console.log('wVDKA Balance:', balance.toString());
         if (web3.utils.toBN(balance).lt(web3.utils.toBN(vdkaStake))) {
-           throw new Error('Insufficient VDKA balance for staking');
+           throw new Error('Insufficient wVDKA balance for staking');
         }
 
         // First check allowance
         const currentAllowance = await verdikta.allowance(owner, keeper.address);
-        console.log('Current VDKA allowance:', currentAllowance.toString());
+        console.log('Current wVDKA allowance:', currentAllowance.toString());
 
         // Approve keeper to spend VDKA
-        console.log('Approving keeper to spend VDKA...');
+        console.log('Approving keeper to spend wVDKA...');
         console.log('Approval params:', {
             owner: owner,
             spender: keeper.address,
             amount: vdkaStake
         });
         await verdikta.approve(keeper.address, vdkaStake, { from: owner });
-        console.log('VDKA spend approved');
+        console.log('wVDKA spend approved');
 
         // Register oracle with the current jobId
         console.log(`Registering oracle for jobID ${currentJobIdString}...`);
@@ -99,13 +95,12 @@ module.exports = async function(callback) {
     const aggregator = await ReputationAggregator.deployed();
     const config = await aggregator.getContractConfig();
     const linkTokenAddress = config.linkAddr;
-    const LinkToken = artifacts.require("LinkTokenInterface");
-    const linkToken = await LinkToken.at(linkTokenAddress);
+    const linkToken = await LinkTokenInterface.at(linkTokenAddress);
 
     console.log('Aggregator config:', {
         oracleAddr: config.oracleAddr,
         linkAddr: config.linkAddr,
-        jobId: config.jobId, // ensure correct property name (jobId)
+        jobId: config.jobId,
         fee: config.fee.toString()
     });
 
@@ -154,4 +149,3 @@ module.exports = async function(callback) {
     callback(error);
   }
 };
-

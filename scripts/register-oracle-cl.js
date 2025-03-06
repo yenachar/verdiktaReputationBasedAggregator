@@ -7,11 +7,11 @@
 //   --aggregator 0xAggregatorAddress \
 //   --link 0xLinkTokenAddress \
 //   --oracle 0xOracleAddress \
-//   --verdikta 0xVerdiktaTokenAddress \
+//   --wrappedverdikta 0xWrappedVerdiktaTokenAddress \
 //   --jobids "jobid1" "jobid2" --network your_network
 //   (Shortcuts, like -l instead of --link also works)
 //   Here is an example registering two jobIDs:
-//   truffle exec scripts/register-oracle-cl.js -a 0xF6b930bDC1b4b64080AA52fb6d4A5C7f9431a27a -l 0xE4aB69C077896252FAFBD49EFD26B5D171A32410 -v 0x9eF54beC2E9051411aFec2161E5eCC56993D9905 -o 0xD67D6508D4E5611cd6a463Dd0969Fa153Be91101 --jobids "38f19572c51041baa5f2dea284614590" "39515f75ac2947beb7f2eeae4d8eaf3e" --network base_sepolia
+//   truffle exec scripts/register-oracle-cl.js -a 0xF6b930bDC1b4b64080AA52fb6d4A5C7f9431a27a -l 0xE4aB69C077896252FAFBD49EFD26B5D171A32410 -w 0x6bF578606493b03026473F838bCD3e3b5bBa5515 -o 0xD67D6508D4E5611cd6a463Dd0969Fa153Be91101 --jobids "38f19572c51041baa5f2dea284614590" "39515f75ac2947beb7f2eeae4d8eaf3e" --network base_sepolia
 
 const yargs = require('yargs/yargs');
 const { hideBin } = require('yargs/helpers');
@@ -110,8 +110,8 @@ const LinkTokenABI = [
   }
 ];
 
-// VerdiktaToken: minimal functions for balance, allowance, approval, and transferFrom.
-const VerdiktaTokenABI = [
+// WrappedVerdiktaToken: minimal functions for balance, allowance, approval, and transferFrom.
+const WrappedVerdiktaTokenABI = [
   {
     "constant": true,
     "inputs": [{ "name": "account", "type": "address" }],
@@ -176,10 +176,10 @@ module.exports = async function(callback) {
         type: 'string',
         description: 'Oracle contract address'
       })
-      .option('verdikta', {
-        alias: 'v',
+      .option('wrappedverdikta', {
+        alias: 'w',
         type: 'string',
-        description: 'VerdiktaToken contract address'
+        description: 'WrappedVerdiktaToken contract address'
       })
       .option('jobids', {
         alias: 'j',
@@ -190,8 +190,8 @@ module.exports = async function(callback) {
       .help()
       .argv;
 
-    if (!argv.aggregator || !argv.link || !argv.oracle || !argv.verdikta || !argv.jobids) {
-      console.error('Error: aggregator, link, oracle, verdikta addresses and jobids must be specified.');
+    if (!argv.aggregator || !argv.link || !argv.oracle || !argv.wrappedverdikta || !argv.jobids) {
+      console.error('Error: aggregator, link, oracle, wrappedverdikta addresses and jobids must be specified.');
       return callback();
     }
 
@@ -210,14 +210,13 @@ module.exports = async function(callback) {
     // Instantiate the ReputationKeeper contract
     const keeper = new web3.eth.Contract(ReputationKeeperABI, keeperAddress);
 
-    // Instantiate the VerdiktaToken contract
-    const verdikta = new web3.eth.Contract(VerdiktaTokenABI, argv.verdikta);
+    // Instantiate the WrappedVerdiktaToken contract
+    const wrappedVerdikta = new web3.eth.Contract(WrappedVerdiktaTokenABI, argv.wrappedverdikta);
 
     // Instantiate the LINK token contract using the user provided LINK address
     const linkToken = new web3.eth.Contract(LinkTokenABI, argv.link);
 
     // Oracle contract address (supplied by user)
-    // const oracleAddress = argv.oracle;
     const oracleAddress = Array.isArray(argv.oracle) ? argv.oracle[0] : argv.oracle;
 
     console.log('Registering oracle contract:', oracleAddress);
@@ -227,7 +226,7 @@ module.exports = async function(callback) {
     console.log('Job IDs:', jobIdStrings);
 
     const linkFee = "50000000000000000"; // 0.05 LINK (18 decimals)
-    const vdkaStake = "100000000000000000000"; // 100 VDKA (18 decimals)
+    const wvdkaStake = "100000000000000000000"; // 100 wVDKA (18 decimals)
 
     // Loop over each jobID and register it if not already active
     for (let i = 0; i < jobIdStrings.length; i++) {
@@ -251,24 +250,24 @@ module.exports = async function(callback) {
       } else {
         // Log addresses for verification
         console.log('Using contracts:');
-        console.log('VerdiktaToken:', verdikta.options.address);
+        console.log('WrappedVerdiktaToken:', wrappedVerdikta.options.address);
         console.log('ReputationKeeper:', keeper.options.address);
 
-        // Check VDKA balance
-        const balance = await verdikta.methods.balanceOf(owner).call();
-        console.log('VDKA Balance:', balance.toString());
-        if (web3.utils.toBN(balance).lt(web3.utils.toBN(vdkaStake))) {
-           throw new Error('Insufficient VDKA balance for staking');
+        // Check wVDKA balance
+        const balance = await wrappedVerdikta.methods.balanceOf(owner).call();
+        console.log('wVDKA Balance:', balance.toString());
+        if (web3.utils.toBN(balance).lt(web3.utils.toBN(wvdkaStake))) {
+           throw new Error('Insufficient wVDKA balance for staking');
         }
 
         // Check current allowance
-        const currentAllowance = await verdikta.methods.allowance(owner, keeper.options.address).call();
-        console.log('Current VDKA allowance:', currentAllowance.toString());
+        const currentAllowance = await wrappedVerdikta.methods.allowance(owner, keeper.options.address).call();
+        console.log('Current wVDKA allowance:', currentAllowance.toString());
 
-        // Approve keeper to spend VDKA
-        console.log('Approving keeper to spend VDKA...');
-        await verdikta.methods.approve(keeper.options.address, vdkaStake).send({ from: owner });
-        console.log('VDKA spend approved');
+        // Approve keeper to spend wVDKA
+        console.log('Approving keeper to spend wVDKA...');
+        await wrappedVerdikta.methods.approve(keeper.options.address, wvdkaStake).send({ from: owner });
+        console.log('wVDKA spend approved');
 
         // Register oracle with the current jobID
         console.log(`Registering oracle for jobID ${currentJobIdString}...`);
@@ -333,3 +332,4 @@ module.exports = async function(callback) {
     callback(error);
   }
 };
+
