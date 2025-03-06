@@ -1,6 +1,6 @@
 // scripts/monitor-contracts.js
 
-const VerdiktaToken = artifacts.require("VerdiktaToken");
+const WrappedVerdiktaToken = artifacts.require("WrappedVerdiktaToken");
 const ReputationKeeper = artifacts.require("ReputationKeeper");
 const ReputationAggregator = artifacts.require("ReputationAggregator");
 
@@ -9,7 +9,7 @@ module.exports = async function(callback) {
     console.log('Starting contract monitoring...\n');
     
     // Get deployed contracts
-    const verdikta = await VerdiktaToken.deployed();
+    const verdikta = await WrappedVerdiktaToken.deployed();
     const keeper = await ReputationKeeper.deployed();
     const aggregator = await ReputationAggregator.deployed();
 
@@ -34,7 +34,7 @@ module.exports = async function(callback) {
     const networkType = await web3.eth.net.getNetworkType();
     console.log(`\nNetwork: ${networkType} (ID: ${networkId})`);
     
-    console.log('\n=== VerdiktaToken Information ===');
+    console.log('\n=== WrappedVerdiktaToken Information ===');
     const tokenName = await verdikta.name();
     const tokenSymbol = await verdikta.symbol();
     const totalSupply = await verdikta.totalSupply();
@@ -53,7 +53,8 @@ module.exports = async function(callback) {
     console.log(`Owner: ${keeperOwner}`);
    
     // Specify the oracle address and the corresponding job ID.
-    const oracleAddress = "0x1f3829ca4Bce27ECbB55CAA8b0F8B51E4ba2cCF6";
+    // const oracleAddress = "0x69b601fC8263E9c55674E5973837062706608DF3";
+    const oracleAddress = "0xD67D6508D4E5611cd6a463Dd0969Fa153Be91101";
     console.log(`\n=== Oracle Status for ${oracleAddress} ===`);
 
     // Define the job ID (using the same job ID as registration)
