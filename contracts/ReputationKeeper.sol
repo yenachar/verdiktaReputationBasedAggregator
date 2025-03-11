@@ -156,7 +156,7 @@ contract ReputationKeeper is Ownable {
     }
     
     /**
-     * @notice Retrieve an oracle identity’s info.
+     * @notice Retrieve an oracle identity's info.
      */
     function getOracleInfo(address _oracle, bytes32 _jobId)
         external
@@ -271,26 +271,90 @@ contract ReputationKeeper is Ownable {
     }
     
     /**
-     * @notice Calculate the weighted selection score for an oracle identity.
+     * @notice Calculate the weighted selection score for an oracle identity, with fee weighting.
      * Oracles that are blocked (and still within the lock period) are treated as having a score of 0.
+     * @param _oracle The oracle address
+     * @param _jobId The job ID
+     * @param alpha The weight parameter for quality vs. timeliness (0-1000)
+     * @param maxFee The maximum fee the user is willing to pay
+     * @param estimatedBaseCost The estimated base cost for processing the request
+     * @param maxFeeBasedScalingFactor The maximum scaling factor for fee weighting
+     * @return The weighted selection score
      */
-    function getSelectionScore(address _oracle, bytes32 _jobId, uint256 alpha) public view returns (uint256) {
+    function getSelectionScore(
+        address _oracle,
+        bytes32 _jobId,
+        uint256 alpha,
+        uint256 maxFee,
+        uint256 estimatedBaseCost,
+        uint256 maxFeeBasedScalingFactor
+    ) public view returns (uint256) {
         bytes32 key = _oracleKey(_oracle, _jobId);
         OracleInfo storage info = oracles[key];
+        
+        // If oracle is blocked and still within lock period, return 0
         if (info.isActive && info.blocked && block.timestamp < info.lockedUntil) return 0;
         
+        // Calculate the base weighted score from quality and timeliness
         int256 weightedScore = (int256(1000 - alpha) * info.qualityScore + int256(alpha) * info.timelinessScore) / 1000;
-        if (weightedScore < int256(MIN_SCORE_FOR_SELECTION)) return MIN_SCORE_FOR_SELECTION;
-        if (weightedScore > int256(MAX_SCORE_FOR_SELECTION)) return MAX_SCORE_FOR_SELECTION;
-        return uint256(weightedScore);
+        
+        // Apply bounds to the base score
+        if (weightedScore < int256(MIN_SCORE_FOR_SELECTION)) {
+            weightedScore = int256(MIN_SCORE_FOR_SELECTION);
+        }
+        if (weightedScore > int256(MAX_SCORE_FOR_SELECTION)) {
+            weightedScore = int256(MAX_SCORE_FOR_SELECTION);
+        }
+        
+        // Get the oracle's fee
+        uint256 oracleFee = info.fee;
+        
+        // Calculate fee-weighting factor: max(min((maxFee-estimatedBaseCost)/(oracleFee-estimatedBaseCost), maxFeeBasedScalingFactor), 1)
+        uint256 feeWeightingFactor = 1e18; // default is 1.0 in fixed point (18 decimals)
+        
+        // Only apply fee weighting if oracleFee > estimatedBaseCost to avoid division by zero
+        if (oracleFee > estimatedBaseCost && maxFee > estimatedBaseCost) {
+            // Calculate (maxFee-estimatedBaseCost)/(oracleFee-estimatedBaseCost) with fixed point math
+            uint256 numerator = (maxFee - estimatedBaseCost) * 1e18;
+            uint256 denominator = oracleFee - estimatedBaseCost;
+            uint256 ratio = numerator / denominator;
+            
+            // Apply min(ratio, maxFeeBasedScalingFactor * 1e18)
+            uint256 maxScaling = maxFeeBasedScalingFactor * 1e18;
+            if (ratio > maxScaling) {
+                feeWeightingFactor = maxScaling;
+            } else if (ratio > 1e18) {
+                feeWeightingFactor = ratio;
+            }
+            // Note: if ratio <= 1e18, we keep the default value of 1e18 (representing 1.0)
+        }
+        
+        // Apply fee weighting to the base score, using fixed point math
+        uint256 finalScore = uint256(weightedScore) * feeWeightingFactor / 1e18;
+        
+        return finalScore;
     }
     
     /**
-     * @notice Select a list of oracle identities based on their weighted scores and fee constraint.
+     * @notice Select a list of oracle identities based on their weighted scores, including fee weighting.
      * Oracles that are currently blocked (and locked) are excluded.
+     * @param count Number of oracles to select
+     * @param alpha Weight parameter for quality vs. timeliness (0-1000)
+     * @param maxFee Maximum fee the user is willing to pay
+     * @param estimatedBaseCost Estimated base cost for processing the request
+     * @param maxFeeBasedScalingFactor Maximum scaling factor for fee weighting
+     * @return Array of selected oracle identities
      */
-    function selectOracles(uint256 count, uint256 alpha, uint256 maxFee) external view returns (OracleIdentity[] memory) {
+    function selectOracles(
+        uint256 count,
+        uint256 alpha,
+        uint256 maxFee,
+        uint256 estimatedBaseCost,
+        uint256 maxFeeBasedScalingFactor
+    ) external view returns (OracleIdentity[] memory) {
         require(approvedContracts[msg.sender].isApproved, "Not approved to select oracles");
+        require(estimatedBaseCost < maxFee, "Base cost must be less than max fee");
+        require(maxFeeBasedScalingFactor >= 1, "Max scaling factor must be at least 1");
         
         uint256 activeCount = 0;
         for (uint256 i = 0; i < registeredOracles.length; i++) {
@@ -322,7 +386,14 @@ contract ReputationKeeper is Ownable {
         uint256 totalWeight = 0;
         uint256[] memory weights = new uint256[](activeCount);
         for (uint256 i = 0; i < activeCount; i++) {
-            weights[i] = getSelectionScore(activeOracles[i].oracle, activeOracles[i].jobId, alpha);
+            weights[i] = getSelectionScore(
+                activeOracles[i].oracle,
+                activeOracles[i].jobId,
+                alpha,
+                maxFee,
+                estimatedBaseCost,
+                maxFeeBasedScalingFactor
+            );
             totalWeight += weights[i];
         }
         
@@ -401,14 +472,13 @@ contract ReputationKeeper is Ownable {
         mildThreshold = _threshold;
     }
 
-/**
- * @notice Updates the reference to the VerdiktaToken contract
- * @param _newVerdiktaToken The address of the new VerdiktaToken contract
- */
-function setVerdiktaToken(address _newVerdiktaToken) external onlyOwner {
-    require(_newVerdiktaToken != address(0), "Invalid token address");
-    verdiktaToken = VerdiktaToken(_newVerdiktaToken);
-}
-
+    /**
+     * @notice Updates the reference to the VerdiktaToken contract
+     * @param _newVerdiktaToken The address of the new VerdiktaToken contract
+     */
+    function setVerdiktaToken(address _newVerdiktaToken) external onlyOwner {
+        require(_newVerdiktaToken != address(0), "Invalid token address");
+        verdiktaToken = VerdiktaToken(_newVerdiktaToken);
+    }
 }
 

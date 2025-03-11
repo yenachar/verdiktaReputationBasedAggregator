@@ -11,7 +11,7 @@ import "./ReputationKeeper.sol";
  *         This version checks that an oracle is still active before calling updateScores,
  *         uses try/catch to skip problematic updates, and emits debug events.
  *
- *         MODIFICATION: Implements a two-stage fee payment. When sending a request, the oracle’s fee is paid.
+ *         MODIFICATION: Implements a two-stage fee payment. When sending a request, the oracle's fee is paid.
  *         Later, after clustering, if an oracle is in the best cluster it receives a bonus payment equal to that fee.
  */
 contract ReputationAggregator is ChainlinkClient, Ownable {
@@ -28,6 +28,10 @@ contract ReputationAggregator is ChainlinkClient, Ownable {
 
     // Owner-settable maximum fee for selecting oracles.
     uint256 public maxFee;
+    
+    // New parameters for fee-based oracle selection
+    uint256 public baseFeePct = 1;      // Base fee as percentage of max fee (default 1%, or 0.01 * maxFee)
+    uint256 public maxFeeBasedScalingFactor = 10; // Default maximum scaling factor
 
     // Single Chainlink oracle info for front-end compatibility.
     address public chainlinkOracle;
@@ -46,6 +50,13 @@ contract ReputationAggregator is ChainlinkClient, Ownable {
     event OracleScoreUpdateSkipped(address indexed oracle, bytes32 indexed jobId, string reason);
     event NewOracleResponseRecorded(bytes32 requestId, uint256 pollIndex, address operator);
     event BonusPayment(address indexed operator, uint256 bonusFee);
+    event DebugBonusTransfer(
+        address indexed operator,
+        uint256 bonusFee,
+        uint256 balanceBefore,
+        uint256 balanceAfter,
+        bool success
+    );
 
     // ------------------------------------------------------------------------
     // Structures
@@ -115,6 +126,32 @@ contract ReputationAggregator is ChainlinkClient, Ownable {
     function setMaxFee(uint256 _maxFee) external onlyOwner {
         maxFee = _maxFee;
     }
+    
+    /**
+     * @notice Set the base fee percentage (as a percentage of maxFee)
+     * @param _baseFeePct The base fee percentage (1-100)
+     */
+    function setBaseFeePct(uint256 _baseFeePct) external onlyOwner {
+        require(_baseFeePct > 0 && _baseFeePct <= 100, "Base fee percentage must be between 1-100");
+        baseFeePct = _baseFeePct;
+    }
+    
+    /**
+     * @notice Set the maximum fee-based scaling factor
+     * @param _maxFeeBasedScalingFactor The maximum scaling factor (must be at least 1)
+     */
+    function setMaxFeeBasedScalingFactor(uint256 _maxFeeBasedScalingFactor) external onlyOwner {
+        require(_maxFeeBasedScalingFactor >= 1, "Max scaling factor must be at least 1");
+        maxFeeBasedScalingFactor = _maxFeeBasedScalingFactor;
+    }
+    
+    /**
+     * @notice Calculate the estimated base cost based on the current baseFeePct
+     * @return The estimated base cost in LINK tokens
+     */
+    function getEstimatedBaseCost() public view returns (uint256) {
+        return (maxFee * baseFeePct) / 100;
+    }
 
     function setConfig(
         uint256 _oraclesToPoll,
@@ -162,8 +199,17 @@ contract ReputationAggregator is ChainlinkClient, Ownable {
         require(address(reputationKeeper) != address(0), "ReputationKeeper not set");
         require(cids.length > 0, "CIDs array must not be empty");
 
-        // Select oracles using the current alpha value and max fee constraint.
-        ReputationKeeper.OracleIdentity[] memory selectedOracles = reputationKeeper.selectOracles(oraclesToPoll, alpha, maxFee);
+        // Calculate the estimated base cost
+        uint256 estimatedBaseCost = getEstimatedBaseCost();
+
+        // Select oracles using the current alpha value, max fee, estimated base cost, and scaling factor
+        ReputationKeeper.OracleIdentity[] memory selectedOracles = reputationKeeper.selectOracles(
+            oraclesToPoll, 
+            alpha, 
+            maxFee,
+            estimatedBaseCost,
+            maxFeeBasedScalingFactor
+        );
         reputationKeeper.recordUsedOracles(selectedOracles);
 
         // Concatenate the CIDs.
@@ -186,7 +232,7 @@ contract ReputationAggregator is ChainlinkClient, Ownable {
 
             address operator = selectedOracles[i].oracle;
             bytes32 jobIdForOracle = selectedOracles[i].jobId;
-            // Modified tuple unpacking to include six components.
+            // Get oracle info but only extract the essential fields to avoid stack too deep errors
             (bool isActive, , , , bytes32 jobIdReturned, uint256 fee, , , ) = reputationKeeper.getOracleInfo(operator, jobIdForOracle);
             require(isActive, "Selected oracle not active at time of polling");
 
@@ -353,88 +399,76 @@ contract ReputationAggregator is ChainlinkClient, Ownable {
     // Returns (processed, updateCluster) where updateCluster is 1 if the response
     // for this slot is in the best cluster (and a bonus fee is paid).
     // ------------------------------------------------------------------------
-
-// Define a new debug event for bonus fee transfer details.
-event DebugBonusTransfer(
-    address indexed operator,
-    uint256 bonusFee,
-    uint256 balanceBefore,
-    uint256 balanceAfter,
-    bool success
-);
-
-function _processPollSlot(
-    AggregatedEvaluation storage aggEval,
-    uint256 slot,
-    uint256[] memory selectedResponseIndices,
-    uint256[] memory clusterResults
-) internal returns (bool processed, uint256 updateCluster) {
-    ReputationKeeper.OracleIdentity memory id = aggEval.polledOracles[slot];
-    // Check if the oracle is active.
-    (bool isActive, , , , , , , , ) = reputationKeeper.getOracleInfo(id.oracle, id.jobId);
-    if (!isActive) {
-        emit OracleScoreUpdateSkipped(id.oracle, id.jobId, "Inactive at finalization");
-        return (false, 0);
-    }
-    // Check if a response exists for this slot.
-    (bool responded, uint256 respIndex) = _getResponseForSlot(aggEval.responses, slot);
-    if (responded) {
-        Response memory resp = aggEval.responses[respIndex];
-        if (resp.selected) {
-            // Find the index of this response in the selectedResponseIndices array.
-            (bool found, uint256 selIndex) = _findIndexInArray(selectedResponseIndices, respIndex);
-            if (found) {
-                if (clusterResults[selIndex] == 1) {
-                    // Clustered: update scores and pay bonus.
-                    try reputationKeeper.updateScores(aggEval.polledOracles[slot].oracle, resp.jobId, int8(4), int8(4)) {
-                        // success
-                    } catch {
-                        emit OracleScoreUpdateSkipped(resp.operator, resp.jobId, "updateScores failed for clustered selected response");
+    function _processPollSlot(
+        AggregatedEvaluation storage aggEval,
+        uint256 slot,
+        uint256[] memory selectedResponseIndices,
+        uint256[] memory clusterResults
+    ) internal returns (bool processed, uint256 updateCluster) {
+        ReputationKeeper.OracleIdentity memory id = aggEval.polledOracles[slot];
+        // Check if the oracle is active.
+        (bool isActive, , , , , , , , ) = reputationKeeper.getOracleInfo(id.oracle, id.jobId);
+        if (!isActive) {
+            emit OracleScoreUpdateSkipped(id.oracle, id.jobId, "Inactive at finalization");
+            return (false, 0);
+        }
+        // Check if a response exists for this slot.
+        (bool responded, uint256 respIndex) = _getResponseForSlot(aggEval.responses, slot);
+        if (responded) {
+            Response memory resp = aggEval.responses[respIndex];
+            if (resp.selected) {
+                // Find the index of this response in the selectedResponseIndices array.
+                (bool found, uint256 selIndex) = _findIndexInArray(selectedResponseIndices, respIndex);
+                if (found) {
+                    if (clusterResults[selIndex] == 1) {
+                        // Clustered: update scores and pay bonus.
+                        try reputationKeeper.updateScores(aggEval.polledOracles[slot].oracle, resp.jobId, int8(4), int8(4)) {
+                            // success
+                        } catch {
+                            emit OracleScoreUpdateSkipped(resp.operator, resp.jobId, "updateScores failed for clustered selected response");
+                        }
+                        // BONUS PAYMENT: transfer extra fee equal to the original fee.
+                        uint256 bonusFee = aggEval.pollFees[slot];
+                        LinkTokenInterface link = LinkTokenInterface(_chainlinkTokenAddress());
+                        uint256 balanceBefore = link.balanceOf(address(this));
+                        bool transferSuccess = link.transfer(resp.operator, bonusFee);
+                        uint256 balanceAfter = link.balanceOf(address(this));
+                        emit DebugBonusTransfer(resp.operator, bonusFee, balanceBefore, balanceAfter, transferSuccess);
+                        if (!transferSuccess) {
+                            // Log failure and revert with a custom message.
+                            revert("Bonus fee transfer failed");
+                        }
+                        emit BonusPayment(resp.operator, bonusFee);
+                        return (true, 1);
+                    } else {
+                        // Selected but not clustered.
+                        try reputationKeeper.updateScores(aggEval.polledOracles[slot].oracle, resp.jobId, int8(-4), int8(0)) {
+                            // success
+                        } catch {
+                            emit OracleScoreUpdateSkipped(resp.operator, resp.jobId, "updateScores failed for non-clustered selected response");
+                        }
+                        return (true, 0);
                     }
-                    // BONUS PAYMENT: transfer extra fee equal to the original fee.
-                    uint256 bonusFee = aggEval.pollFees[slot];
-                    LinkTokenInterface link = LinkTokenInterface(_chainlinkTokenAddress());
-                    uint256 balanceBefore = link.balanceOf(address(this));
-                    bool transferSuccess = link.transfer(resp.operator, bonusFee);
-                    uint256 balanceAfter = link.balanceOf(address(this));
-                    emit DebugBonusTransfer(resp.operator, bonusFee, balanceBefore, balanceAfter, transferSuccess);
-                    if (!transferSuccess) {
-                        // Log failure and revert with a custom message.
-                        revert("Bonus fee transfer failed");
-                    }
-                    emit BonusPayment(resp.operator, bonusFee);
-                    return (true, 1);
-                } else {
-                    // Selected but not clustered.
-                    try reputationKeeper.updateScores(aggEval.polledOracles[slot].oracle, resp.jobId, int8(-4), int8(0)) {
-                        // success
-                    } catch {
-                        emit OracleScoreUpdateSkipped(resp.operator, resp.jobId, "updateScores failed for non-clustered selected response");
-                    }
-                    return (true, 0);
                 }
+            } else {
+                // not selected
+                try reputationKeeper.updateScores(aggEval.polledOracles[slot].oracle, resp.jobId, int8(0), int8(-4)) {
+                    // success
+                } catch {
+                    emit OracleScoreUpdateSkipped(resp.operator, resp.jobId, "updateScores failed for responded but not selected");
+                }
+                return (true, 0);
             }
         } else {
-            // not selected
-            try reputationKeeper.updateScores(aggEval.polledOracles[slot].oracle, resp.jobId, int8(0), int8(-4)) {
+            // never responded
+            try reputationKeeper.updateScores(id.oracle, id.jobId, int8(0), int8(-4)) {
                 // success
             } catch {
-                emit OracleScoreUpdateSkipped(resp.operator, resp.jobId, "updateScores failed for responded but not selected");
+                emit OracleScoreUpdateSkipped(id.oracle, id.jobId, "updateScores failed for no response");
             }
             return (true, 0);
         }
-    } else {
-        // never responded
-        try reputationKeeper.updateScores(id.oracle, id.jobId, int8(0), int8(-4)) {
-            // success
-        } catch {
-            emit OracleScoreUpdateSkipped(id.oracle, id.jobId, "updateScores failed for no response");
-        }
-        return (true, 0);
     }
-}
-
-
 
     // ------------------------------------------------------------------------
     // Helper: Find a response for a given poll slot.
