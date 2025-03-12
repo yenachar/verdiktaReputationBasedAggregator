@@ -18,6 +18,8 @@ import "./ReputationKeeper.sol";
  *         the caller must pre-approve up to:
  *           maxFee * (oraclesToPoll + clusterSize)
  *         and the contract withdraws only the exact amounts needed for base fees and bonus payments.
+ *         In this new call, the caller also passes in values for alpha, maxFee, estimatedBaseCost, and maxFeeBasedScalingFactor,
+ *         which are used when selecting oracles.
  */
 contract ReputationAggregator is ChainlinkClient, Ownable {
     using Chainlink for Chainlink.Request;
@@ -260,18 +262,26 @@ contract ReputationAggregator is ChainlinkClient, Ownable {
     //     maxFee * (oraclesToPoll + clusterSize)
     // This new flow withdraws exactly the fee needed for each oracle call and, later,
     // for each bonus payment.
+    // Additionally, this function accepts values for alpha, maxFee, estimatedBaseCost, and maxFeeBasedScalingFactor,
+    // which are passed to the reputation keeper.
     // ------------------------------------------------------------------------
-    function requestAIEvaluationWithApproval(string[] memory cids) public returns (bytes32) {
+    function requestAIEvaluationWithApproval(
+        string[] memory cids,
+        uint256 _alpha,
+        uint256 _maxFee,
+        uint256 _estimatedBaseCost,
+        uint256 _maxFeeBasedScalingFactor
+    ) public returns (bytes32) {
         require(address(reputationKeeper) != address(0), "ReputationKeeper not set");
         require(cids.length > 0, "CIDs array must not be empty");
 
-        uint256 estimatedBaseCost = getEstimatedBaseCost();
+        // Use the provided parameters for oracle selection.
         ReputationKeeper.OracleIdentity[] memory selectedOracles = reputationKeeper.selectOracles(
             oraclesToPoll,
-            alpha,
-            maxFee,
-            estimatedBaseCost,
-            maxFeeBasedScalingFactor
+            _alpha,
+            _maxFee,
+            _estimatedBaseCost,
+            _maxFeeBasedScalingFactor
         );
         reputationKeeper.recordUsedOracles(selectedOracles);
 
