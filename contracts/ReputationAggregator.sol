@@ -8,18 +8,12 @@ import "./ReputationKeeper.sol";
 /**
  * @title ReputationAggregator
  * @notice Aggregates responses from Chainlink oracles and updates reputation scores.
- *         This version checks that an oracle is still active before calling updateScores,
- *         uses try/catch to skip problematic updates, and emits debug events.
  *
- *         MODIFICATION: Implements a two-stage fee payment. When sending a request, the oracle's fee is paid.
- *         Later, after clustering, if an oracle is in the best cluster it receives a bonus payment equal to that fee.
- *
- *         NEW: Adds a separate approve/transfer-based flow (requestAIEvaluationWithApproval) where
- *         the caller must pre-approve up to:
- *           maxFee * (oraclesToPoll + clusterSize)
- *         and the contract withdraws only the exact amounts needed for base fees and bonus payments.
- *         In this new call, the caller also passes in values for alpha, maxFee, estimatedBaseCost, and maxFeeBasedScalingFactor,
- *         which are used when selecting oracles.
+ *         This contract supports only a user-funded flow. In this mode, the caller
+ *         must pre-approve the contract for at least:
+ *             maxFee * (oraclesToPoll + clusterSize)
+ *         The contract withdraws exactly the fee required for each oracle call (and later bonus payments).
+ *         The caller also supplies parameters for oracle selection.
  */
 contract ReputationAggregator is ChainlinkClient, Ownable {
     using Chainlink for Chainlink.Request;
@@ -30,15 +24,15 @@ contract ReputationAggregator is ChainlinkClient, Ownable {
     uint256 public oraclesToPoll;       // Total oracles to poll (M)
     uint256 public requiredResponses;   // First N responses to consider (N)
     uint256 public clusterSize;         // Cluster size (P)
-    uint256 public responseTimeoutSeconds = 300; // (not used for scoring)
+    uint256 public responseTimeoutSeconds = 300; // Timeout in seconds for responses
     uint256 public alpha = 500;         // Reputation weight
 
     // Owner-settable maximum fee for selecting oracles.
     uint256 public maxFee;
     
-    // New parameters for fee-based oracle selection
-    uint256 public baseFeePct = 1;      // Base fee as percentage of max fee (default 1%, or 0.01 * maxFee)
-    uint256 public maxFeeBasedScalingFactor = 10; // Default maximum scaling factor
+    // Parameters for fee-based oracle selection.
+    uint256 public baseFeePct = 1;      // Base fee percentage of maxFee (default 1%)
+    uint256 public maxFeeBasedScalingFactor = 10; // Maximum scaling factor
 
     // Single Chainlink oracle info for front-end compatibility.
     address public chainlinkOracle;
@@ -90,7 +84,7 @@ contract ReputationAggregator is ChainlinkClient, Ownable {
         mapping(bytes32 => bool) requestIds;  // Track valid request IDs
         ReputationKeeper.OracleIdentity[] polledOracles;
         uint256[] pollFees; // store the fee for each poll slot (for bonus payment)
-        // NEW fields for user-funded requests:
+        // In user-funded mode:
         bool userFunded;
         address requester;
     }
@@ -203,67 +197,14 @@ contract ReputationAggregator is ChainlinkClient, Ownable {
     }
 
     // ------------------------------------------------------------------------
-    // Old functionality:
-    // requestAIEvaluation: Initiates oracle requests using the contract's pre-funded LINK.
-    // ------------------------------------------------------------------------
-    function requestAIEvaluation(string[] memory cids) public returns (bytes32) {
-        require(address(reputationKeeper) != address(0), "ReputationKeeper not set");
-        require(cids.length > 0, "CIDs array must not be empty");
-
-        uint256 estimatedBaseCost = getEstimatedBaseCost();
-        ReputationKeeper.OracleIdentity[] memory selectedOracles = reputationKeeper.selectOracles(
-            oraclesToPoll, 
-            alpha, 
-            maxFee,
-            estimatedBaseCost,
-            maxFeeBasedScalingFactor
-        );
-        reputationKeeper.recordUsedOracles(selectedOracles);
-
-        string memory cidsConcatenated = concatenateCids(cids);
-        bytes32 aggregatorRequestId = keccak256(abi.encodePacked(
-            block.timestamp,
-            msg.sender,
-            cidsConcatenated
-        ));
-
-        AggregatedEvaluation storage aggEval = aggregatedEvaluations[aggregatorRequestId];
-        aggEval.expectedResponses = oraclesToPoll;
-        aggEval.requiredResponses = requiredResponses;
-        aggEval.clusterSize = clusterSize;
-        aggEval.isComplete = false;
-        // userFunded remains false in old flow
-
-        for (uint256 i = 0; i < selectedOracles.length; i++) {
-            aggEval.polledOracles.push(selectedOracles[i]);
-
-            address operator = selectedOracles[i].oracle;
-            bytes32 jobIdForOracle = selectedOracles[i].jobId;
-            (bool isActive, , , , bytes32 jobIdReturned, uint256 fee, , , ) = reputationKeeper.getOracleInfo(operator, jobIdForOracle);
-            require(isActive, "Selected oracle not active at time of polling");
-
-            bytes32 operatorRequestId = _sendSingleOracleRequest(operator, jobIdReturned, fee, cidsConcatenated);
-            requestIdToAggregatorId[operatorRequestId] = aggregatorRequestId;
-            requestIdToPollIndex[operatorRequestId] = aggEval.polledOracles.length - 1;
-            aggEval.requestIds[operatorRequestId] = true;
-            
-            aggEval.pollFees.push(fee);
-        }
-
-        emit RequestAIEvaluation(aggregatorRequestId, cids);
-        return aggregatorRequestId;
-    }
-
-    // ------------------------------------------------------------------------
     // New functionality:
     // requestAIEvaluationWithApproval: Initiates oracle requests using funds withdrawn via transferFrom.
     //
     // The caller must have approved this contract for at least:
     //     maxFee * (oraclesToPoll + clusterSize)
-    // This new flow withdraws exactly the fee needed for each oracle call and, later,
-    // for each bonus payment.
-    // Additionally, this function accepts values for alpha, maxFee, estimatedBaseCost, and maxFeeBasedScalingFactor,
-    // which are passed to the reputation keeper.
+    // The contract withdraws exactly the fee needed for each oracle call and bonus payment.
+    // Additionally, the caller passes in values for alpha, maxFee, estimatedBaseCost, and maxFeeBasedScalingFactor,
+    // which are used for oracle selection.
     // ------------------------------------------------------------------------
     function requestAIEvaluationWithApproval(
         string[] memory cids,
@@ -327,7 +268,9 @@ contract ReputationAggregator is ChainlinkClient, Ownable {
         return aggregatorRequestId;
     }
 
+    // ------------------------------------------------------------------------
     // Helper: send a single Chainlink request.
+    // ------------------------------------------------------------------------
     function _sendSingleOracleRequest(
         address operator,
         bytes32 jobId,
@@ -525,8 +468,8 @@ contract ReputationAggregator is ChainlinkClient, Ownable {
     // ------------------------------------------------------------------------
     // New helper: _payBonus
     // Separates the bonus payment logic to reduce stack depth.
-    // If the evaluation is user funded, it first withdraws the bonus fee from the requester.
-    // Then it transfers the bonus fee to the operator.
+    // If the evaluation is user funded, it withdraws the bonus fee from the requester first,
+    // then transfers the bonus fee to the operator.
     // ------------------------------------------------------------------------
     function _payBonus(
         address requester,
