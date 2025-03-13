@@ -305,21 +305,21 @@ module.exports = async function(callback) {
     });
     
     // Approve a large amount of LINK (max uint256)
-    const maxLinkApproval = "115792089237316195423570985008687907853269984665640564039457584007913129639935";
-    console.log('Approving LINK token spending...');
+    // const maxLinkApproval = "115792089237316195423570985008687907853269984665640564039457584007913129639935";
+    // console.log('Approving LINK token spending...');
 
     // Approve for oracle
-    await linkToken.methods.approve(oracleAddress, maxLinkApproval).send({ from: owner });
-    console.log('LINK spending approved for oracle');
+    // await linkToken.methods.approve(oracleAddress, maxLinkApproval).send({ from: owner });
+    // console.log('LINK spending approved for oracle');
     
     // Approve for aggregator
-    await linkToken.methods.approve(argv.aggregator, maxLinkApproval).send({ from: owner });
-    console.log('LINK spending approved for aggregator');
+    // await linkToken.methods.approve(argv.aggregator, maxLinkApproval).send({ from: owner });
+    // console.log('LINK spending approved for aggregator');
 
-    // Verify new allowances
+    // Verify allowances
     const newOracleAllowance = await linkToken.methods.allowance(owner, oracleAddress).call();
     const newAggregatorAllowance = await linkToken.methods.allowance(owner, argv.aggregator).call();
-    console.log('New allowances:', {
+    console.log('Allowances:', {
         oracleAllowance: newOracleAllowance.toString(),
         aggregatorAllowance: newAggregatorAllowance.toString()
     });
