@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.21;
 
-import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/extensions/ERC20Permit.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/introspection/ERC165.sol";
 
@@ -52,7 +52,7 @@ interface ILegacyMintableERC20 {
  * @notice Wrapped version of VerdiktaToken for Base Sepolia, compatible with Base Standard Bridge.
  * Implements IOptimismMintableERC20 and ILegacyMintableERC20.
  */
-contract WrappedVerdiktaToken is ERC20, Ownable, ERC165, IOptimismMintableERC20, ILegacyMintableERC20 {
+contract WrappedVerdiktaToken is ERC20Permit, Ownable, ERC165, IOptimismMintableERC20, ILegacyMintableERC20 {
     address public immutable l1_Token;
     address public immutable l1Bridge;
     address public immutable l2Bridge;
@@ -87,7 +87,11 @@ contract WrappedVerdiktaToken is ERC20, Ownable, ERC165, IOptimismMintableERC20,
         address _l1Token,
         address _l1Bridge,
         address _l2Bridge
-    ) ERC20("Wrapped Verdikta", "wVDKA") Ownable(msg.sender) {
+    )
+        ERC20("Wrapped Verdikta", "wVDKA")
+        ERC20Permit("Wrapped Verdikta")
+        Ownable(msg.sender)
+    {
         require(_l1Token != address(0), "Invalid L1 token address");
         require(_l1Bridge != address(0), "Invalid L1 bridge address");
         require(_l2Bridge == L2_STANDARD_BRIDGE, "Invalid L2 bridge address");
@@ -137,7 +141,11 @@ contract WrappedVerdiktaToken is ERC20, Ownable, ERC165, IOptimismMintableERC20,
      * @param to Address to mint tokens to.
      * @param amount Amount of tokens to mint.
      */
-    function mint(address to, uint256 amount) external override(ILegacyMintableERC20, IOptimismMintableERC20) onlyBridge {
+    function mint(address to, uint256 amount)
+        external
+        override(ILegacyMintableERC20, IOptimismMintableERC20)
+        onlyBridge
+    {
         _mint(to, amount);
     }
 
@@ -167,7 +175,11 @@ contract WrappedVerdiktaToken is ERC20, Ownable, ERC165, IOptimismMintableERC20,
      * @param from Address to burn tokens from.
      * @param amount Amount of tokens to burn.
      */
-    function burn(address from, uint256 amount) external override(ILegacyMintableERC20, IOptimismMintableERC20) onlyBridge {
+    function burn(address from, uint256 amount)
+        external
+        override(ILegacyMintableERC20, IOptimismMintableERC20)
+        onlyBridge
+    {
         _burn(from, amount);
     }
 
