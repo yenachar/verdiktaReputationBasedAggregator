@@ -29,8 +29,7 @@ module.exports = async function(callback) {
     console.log(`Address: ${verdikta.address}`);
     console.log(`Name: ${tokenName}`);
     console.log(`Symbol: ${tokenSymbol}`);
-    console.log(`Total Supply: ${web3.utils.fromWei(totalSupply, 'ether')} tokens`);
-    console.log(`Contract Balance: ${web3.utils.fromWei(tokenBalance, 'ether')} ETH`);
+    console.log(`Supply: ${web3.utils.fromWei(totalSupply, 'ether')} tokens`);
     
     console.log('\n=== ReputationKeeper Information ===');
     const keeperBalance = await web3.eth.getBalance(keeper.address);
@@ -77,7 +76,6 @@ module.exports = async function(callback) {
     
     console.log('\nAggregator Configuration:');
     console.log(`Address: ${aggregator.address}`);
-    console.log(`Contract Balance: ${web3.utils.fromWei(aggBalance, 'ether')} ETH`);
     console.log(`Owner: ${aggOwner}`);
     console.log(`Oracles to Poll: ${oraclesToPoll}`);
     console.log(`Required Responses: ${requiredResponses}`);
