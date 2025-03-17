@@ -49,7 +49,6 @@ module.exports = async function(callback) {
     const keeperBalance = await web3.eth.getBalance(keeper.address);
     const keeperOwner = await keeper.owner();
     console.log(`Address: ${keeper.address}`);
-    console.log(`Contract Balance: ${web3.utils.fromWei(keeperBalance, 'ether')} ETH`);
     console.log(`Owner: ${keeperOwner}`);
    
     // Specify the oracle address and the corresponding job ID.
