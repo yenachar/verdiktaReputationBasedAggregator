@@ -51,8 +51,7 @@ module.exports = async function(callback) {
 
     // Log the returned oracle information.
     console.log(`Active: ${oracleInfo.isActive}`);
-    console.log(`Quality Score: ${oracleInfo.qualityScore.toString()}`);
-    console.log(`Timeliness Score: ${oracleInfo.timelinessScore.toString()}`);
+    console.log(`Quality/Timeliness Scores: ${oracleInfo.qualityScore.toString()}, ${oracleInfo.timelinessScore.toString()}`);
     console.log(`Job ID: ${oracleInfo.jobId}`); // jobId is bytes32; convert if needed
     console.log(`Fee: ${oracleInfo.fee.toString()}`);
 
