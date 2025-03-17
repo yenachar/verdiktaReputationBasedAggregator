@@ -74,26 +74,6 @@ module.exports = async function(callback) {
     const aggBalance = await web3.eth.getBalance(aggregator.address);
     const aggOwner = await aggregator.owner();
 
-    // Get LINK balance
-    try {
-      const contractConfig = await aggregator.getContractConfig();
-      const linkTokenAddress = contractConfig.linkAddr;
-      const LinkToken = new web3.eth.Contract([
-        {
-          "constant": true,
-          "inputs": [{"name": "owner", "type": "address"}],
-          "name": "balanceOf",
-          "outputs": [{"name": "", "type": "uint256"}],
-          "type": "function"
-        }
-      ], linkTokenAddress);
-      
-      const linkBalance = await LinkToken.methods.balanceOf(aggregator.address).call();
-      console.log(`LINK Balance: ${web3.utils.fromWei(linkBalance, 'ether')} LINK`);
-    } catch (error) {
-      console.log('Could not fetch LINK balance:', error.message);
-    }
-    
     // Get configuration parameters
     const oraclesToPoll = await aggregator.oraclesToPoll();
     const requiredResponses = await aggregator.requiredResponses();
@@ -103,13 +83,9 @@ module.exports = async function(callback) {
     // Get Chainlink configuration
     try {
       const contractConfig = await aggregator.getContractConfig();
-      console.log('\nChainlink Configuration:');
-      console.log(`Oracle Address: ${contractConfig.oracleAddr}`);
-      console.log(`LINK Token: ${contractConfig.linkAddr}`);
-      console.log(`Job ID: ${web3.utils.toAscii(contractConfig.jobId)}`);
-      console.log(`Fee: ${web3.utils.fromWei(contractConfig.fee.toString(), 'ether')} LINK`);
+      console.log(`Aggregator's LINK Token: ${contractConfig.linkAddr}`);
     } catch (error) {
-      console.log('No active oracle configuration found');
+      console.log('No active configuration for LINK Token address found');
     }
     
     console.log('\nAggregator Configuration:');
