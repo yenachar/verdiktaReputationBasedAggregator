@@ -480,5 +480,12 @@ contract ReputationKeeper is Ownable {
         require(_newVerdiktaToken != address(0), "Invalid token address");
         verdiktaToken = VerdiktaToken(_newVerdiktaToken);
     }
+
+    // Return the count of registered oracles.
+    function getRegisteredOraclesCount() external view returns (uint256) {
+        return registeredOracles.length;
+    }
+}
+
 }
 
