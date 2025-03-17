@@ -15,24 +15,11 @@ module.exports = async function(callback) {
 
     // Get deployment information
     console.log('\n=== Deployment Information ===');
-    try {
-      if (aggregator.transactionHash && typeof aggregator.transactionHash === 'string') {
-        const deployedBlock = await web3.eth.getTransactionReceipt(aggregator.transactionHash);
-        if (deployedBlock) {
-          console.log(`Deployed at block: ${deployedBlock.blockNumber}`);
-          console.log(`Deployment transaction: ${aggregator.transactionHash}`);
-        }
-      } else {
-        console.log('Deployment transaction information not available');
-      }
-    } catch (error) {
-      console.log('Could not fetch deployment information:', error.message);
-    }
-    
+ 
     // Check network
     const networkId = await web3.eth.net.getId();
     const networkType = await web3.eth.net.getNetworkType();
-    console.log(`\nNetwork: ${networkType} (ID: ${networkId})`);
+    console.log(`Network: ${networkType} (ID: ${networkId})`);
     
     console.log('\n=== WrappedVerdiktaToken Information ===');
     const tokenName = await verdikta.name();
