@@ -15,8 +15,6 @@ module.exports = async function(callback) {
 
     // Get deployment information
     console.log('\n=== Deployment Information ===');
- 
-    // Check network
     const networkId = await web3.eth.net.getId();
     const networkType = await web3.eth.net.getNetworkType();
     console.log(`Network: ${networkType} (ID: ${networkId})`);
@@ -25,7 +23,6 @@ module.exports = async function(callback) {
     const tokenName = await verdikta.name();
     const tokenSymbol = await verdikta.symbol();
     const totalSupply = await verdikta.totalSupply();
-    const tokenBalance = await web3.eth.getBalance(verdikta.address);
     console.log(`Address: ${verdikta.address}`);
     console.log(`Name: ${tokenName}`);
     console.log(`Symbol: ${tokenSymbol}`);
@@ -36,36 +33,57 @@ module.exports = async function(callback) {
     const keeperOwner = await keeper.owner();
     console.log(`Address: ${keeper.address}`);
     console.log(`Owner: ${keeperOwner}`);
-   
-    // Specify the oracle address and the corresponding job ID.
-    // const oracleAddress = "0x69b601fC8263E9c55674E5973837062706608DF3";
-    const oracleAddress = "0xD67D6508D4E5611cd6a463Dd0969Fa153Be91101";
-    console.log(`\n=== Oracle Status for ${oracleAddress} ===`);
 
-    // Define the job ID (using the same job ID as registration)
-    const jobIdString = "38f19572c51041baa5f2dea284614590";
-    const jobId = web3.utils.fromAscii(jobIdString);
+    // Instead of hard-coding oracle addresses and job IDs, retrieve them from OracleRegistered events.
+    console.log('\n=== Registered Oracles Information ===');
 
-    // Call the getOracleInfo method on the keeper contract with both parameters.
-    const oracleInfo = await keeper.getOracleInfo(oracleAddress, jobId);
+    // Fetch OracleRegistered events from the beginning of time until the latest block.
+    const registeredEvents = await keeper.getPastEvents('OracleRegistered', {
+      fromBlock: 0,
+      toBlock: 'latest'
+    });
 
-    // Log the returned oracle information.
-    console.log(`Active: ${oracleInfo.isActive}`);
-    console.log(`Quality/Timeliness Scores: ${oracleInfo.qualityScore.toString()}, ${oracleInfo.timelinessScore.toString()}`);
-    console.log(`Job ID: ${oracleInfo.jobId}`); // jobId is bytes32; convert if needed
-    console.log(`Fee: ${oracleInfo.fee.toString()}`);
+    // Use a map to store unique oracle/jobID pairs (in case an oracle is registered multiple times).
+    const uniqueOracles = new Map();
+    for (const event of registeredEvents) {
+      const oracle = event.returnValues.oracle;
+      const jobId = event.returnValues.jobId; // bytes32 as a hex string
+      const fee = event.returnValues.fee;
+      const key = `${oracle}-${jobId}`;
+      if (!uniqueOracles.has(key)) {
+        uniqueOracles.set(key, { oracle, jobId, fee });
+      }
+    }
+
+    if (uniqueOracles.size === 0) {
+      console.log("No registered oracles found");
+    } else {
+      console.log("Registered oracles found. Active ones:");
+      for (const [key, oracleEntry] of uniqueOracles.entries()) {
+        const oracleInfo = await keeper.getOracleInfo(oracleEntry.oracle, oracleEntry.jobId);
+	if(oracleInfo.isActive)
+	{
+        console.log(`\nOracle Address: ${oracleEntry.oracle}`);
+        console.log(`Job ID (raw bytes32): ${oracleEntry.jobId}`);
+        console.log(`Quality,Timeliness Scores: ${oracleInfo.qualityScore.toString()},${oracleInfo.timelinessScore.toString()}`);
+        //console.log(`Call Count: ${oracleInfo.callCount.toString()}`);
+        //console.log(`Locked Until: ${oracleInfo.lockedUntil.toString()}`);
+        //console.log(`Blocked: ${oracleInfo.blocked}`);
+	}
+      }
+    }
 
     console.log('\n=== ReputationAggregator Information ===');
     const aggBalance = await web3.eth.getBalance(aggregator.address);
     const aggOwner = await aggregator.owner();
 
-    // Get configuration parameters
+    // Get configuration parameters (using appropriate aggregator methods)
     const oraclesToPoll = await aggregator.oraclesToPoll();
     const requiredResponses = await aggregator.requiredResponses();
     const clusterSize = await aggregator.clusterSize();
     const responseTimeout = await aggregator.responseTimeoutSeconds();
     
-    // Get Chainlink configuration
+    // Get Chainlink configuration if available
     try {
       const contractConfig = await aggregator.getContractConfig();
       console.log(`Aggregator's LINK Token: ${contractConfig.linkAddr}`);
@@ -82,14 +100,14 @@ module.exports = async function(callback) {
     console.log(`Response Timeout: ${responseTimeout.toString()} seconds`);
     console.log(`Max Fee: ${web3.utils.fromWei((await aggregator.maxFee()).toString(), 'ether')} LINK`);
 
-    // Get recent events
+    // Get recent events from the aggregator contract
     const fromBlock = await web3.eth.getBlockNumber() - 1000; // Last 1000 blocks
     const events = await aggregator.getPastEvents('allEvents', {
       fromBlock: fromBlock,
       toBlock: 'latest'
     });
     
-    console.log('\nRecent Events:');
+    console.log('\nRecent Aggregator Events:');
     events.forEach(event => {
       console.log(`\nEvent: ${event.event}`);
       console.log('Parameters:', event.returnValues);
