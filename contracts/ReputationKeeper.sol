@@ -487,5 +487,3 @@ contract ReputationKeeper is Ownable {
     }
 }
 
-}
-
