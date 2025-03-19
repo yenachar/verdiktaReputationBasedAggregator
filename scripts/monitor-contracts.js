@@ -98,7 +98,7 @@ module.exports = async function(callback) {
     console.log(`Required Responses: ${requiredResponses}`);
     console.log(`Cluster Size: ${clusterSize}`);
     console.log(`Response Timeout: ${responseTimeout.toString()} seconds`);
-    console.log(`Max Fee: ${web3.utils.fromWei((await aggregator.maxFee()).toString(), 'ether')} LINK`);
+    console.log(`Max Fee: ${web3.utils.fromWei((await aggregator.maxOracleFee()).toString(), 'ether')} LINK`);
 
     // Get recent events from the aggregator contract
     const fromBlock = await web3.eth.getBlockNumber() - 1000; // Last 1000 blocks

@@ -11,7 +11,7 @@ import "./ReputationKeeper.sol";
  *
  *         This contract supports only a user-funded flow. In this mode, the caller
  *         must pre-approve the contract for at least:
- *             maxFee * (oraclesToPoll + clusterSize)
+ *             maxOracleFee * (oraclesToPoll + clusterSize)
  *         The contract withdraws exactly the fee required for each oracle call (and later bonus payments).
  *         The caller also supplies parameters for oracle selection.
  */
@@ -28,10 +28,10 @@ contract ReputationAggregator is ChainlinkClient, Ownable {
     uint256 public alpha = 500;         // Reputation weight
 
     // Owner-settable maximum fee for selecting oracles.
-    uint256 public maxFee;
+    uint256 public maxOracleFee;
     
     // Parameters for fee-based oracle selection.
-    uint256 public baseFeePct = 1;      // Base fee percentage of maxFee (default 1%)
+    uint256 public baseFeePct = 1;      // Base fee percentage of maxOracleFee (default 1%)
     uint256 public maxFeeBasedScalingFactor = 10; // Maximum scaling factor
 
     // Single Chainlink oracle info for front-end compatibility.
@@ -108,7 +108,7 @@ contract ReputationAggregator is ChainlinkClient, Ownable {
         clusterSize = 2;
         responseTimeoutSeconds = 5 minutes;
         // Set a default maximum fee (e.g., 0.1 LINK)
-        maxFee = 0.1 * 10**18;
+        maxOracleFee = 0.1 * 10**18;
     }
 
     // ------------------------------------------------------------------------
@@ -127,12 +127,20 @@ contract ReputationAggregator is ChainlinkClient, Ownable {
         return alpha;
     }
 
-    function setMaxFee(uint256 _maxFee) external onlyOwner {
-        maxFee = _maxFee;
+    function setMaxOracleFee(uint256 _maxOracleFee) external onlyOwner {
+        maxOracleFee = _maxOracleFee;
     }
     
     /**
-     * @notice Set the base fee percentage (as a percentage of maxFee)
+     * @notice Calculate the maximum total fee that might be required
+     * @return The maximum total fee (maxOracleFee * (oraclesToPoll + clusterSize))
+     */
+    function maxTotalFee() public view returns (uint256) {
+        return maxOracleFee * (oraclesToPoll + clusterSize);
+    }
+    
+    /**
+     * @notice Set the base fee percentage (as a percentage of maxOracleFee)
      * @param _baseFeePct The base fee percentage (1-100)
      */
     function setBaseFeePct(uint256 _baseFeePct) external onlyOwner {
@@ -154,7 +162,7 @@ contract ReputationAggregator is ChainlinkClient, Ownable {
      * @return The estimated base cost in LINK tokens
      */
     function getEstimatedBaseCost() public view returns (uint256) {
-        return (maxFee * baseFeePct) / 100;
+        return (maxOracleFee * baseFeePct) / 100;
     }
 
     function setConfig(
@@ -201,15 +209,15 @@ contract ReputationAggregator is ChainlinkClient, Ownable {
     // requestAIEvaluationWithApproval: Initiates oracle requests using funds withdrawn via transferFrom.
     //
     // The caller must have approved this contract for at least:
-    //     maxFee * (oraclesToPoll + clusterSize)
+    //     maxOracleFee * (oraclesToPoll + clusterSize)
     // The contract withdraws exactly the fee needed for each oracle call and bonus payment.
-    // Additionally, the caller passes in values for alpha, maxFee, estimatedBaseCost, and maxFeeBasedScalingFactor,
+    // Additionally, the caller passes in values for alpha, maxOracleFee, estimatedBaseCost, and maxFeeBasedScalingFactor,
     // which are used for oracle selection.
     // ------------------------------------------------------------------------
     function requestAIEvaluationWithApproval(
         string[] memory cids,
         uint256 _alpha,
-        uint256 _maxFee,
+        uint256 _maxOracleFee,
         uint256 _estimatedBaseCost,
         uint256 _maxFeeBasedScalingFactor
     ) public returns (bytes32) {
@@ -220,7 +228,7 @@ contract ReputationAggregator is ChainlinkClient, Ownable {
         ReputationKeeper.OracleIdentity[] memory selectedOracles = reputationKeeper.selectOracles(
             oraclesToPoll,
             _alpha,
-            _maxFee,
+            _maxOracleFee,
             _estimatedBaseCost,
             _maxFeeBasedScalingFactor
         );
@@ -637,4 +645,3 @@ contract ReputationAggregator is ChainlinkClient, Ownable {
         require(link.transfer(_to, _amount), "LINK transfer failed");
     }
 }
-
