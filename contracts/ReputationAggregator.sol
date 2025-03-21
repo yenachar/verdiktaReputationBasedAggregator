@@ -35,9 +35,9 @@ contract ReputationAggregator is ChainlinkClient, Ownable {
     uint256 public maxFeeBasedScalingFactor = 10; // Maximum scaling factor
 
     // Single Chainlink oracle info for front-end compatibility.
-    address public chainlinkOracle;
-    bytes32 public chainlinkJobId;
-    uint256 public chainlinkFee;
+    // address public chainlinkOracle;
+    // bytes32 public chainlinkJobId;
+    // uint256 public chainlinkFee;
 
     // Reference to the ReputationKeeper contract.
     ReputationKeeper public reputationKeeper;
@@ -187,11 +187,11 @@ contract ReputationAggregator is ChainlinkClient, Ownable {
     }
 
     // Set a single Chainlink oracle (for front-end compatibility).
-    function setChainlinkOracle(address _oracle) external onlyOwner {
-        chainlinkOracle = _oracle;
-        chainlinkJobId = bytes32("DefaultJobId");
-        chainlinkFee = 0.1 * 10**18; // e.g., 0.1 LINK
-    }
+    // function setChainlinkOracle(address _oracle) external onlyOwner {
+    //    chainlinkOracle = _oracle;
+    //    chainlinkJobId = bytes32("DefaultJobId");
+    //    chainlinkFee = 0.1 * 10**18; // e.g., 0.1 LINK
+    //}
 
     // Set reputationKeeper.
     function setReputationKeeper(address _reputationKeeper) external onlyOwner {
@@ -199,10 +199,10 @@ contract ReputationAggregator is ChainlinkClient, Ownable {
     }
 
     // Debug function.
-    function emitDebug1() external {
-        uint256 linkBalance = LinkTokenInterface(_chainlinkTokenAddress()).balanceOf(address(this));
-        emit Debug1(_chainlinkTokenAddress(), chainlinkOracle, chainlinkFee, linkBalance, chainlinkJobId);
-    }
+    // function emitDebug1() external {
+    //    uint256 linkBalance = LinkTokenInterface(_chainlinkTokenAddress()).balanceOf(address(this));
+    //    emit Debug1(_chainlinkTokenAddress(), chainlinkOracle, chainlinkFee, linkBalance, chainlinkJobId);
+    //}
 
     // ------------------------------------------------------------------------
     // New functionality:
@@ -615,11 +615,12 @@ contract ReputationAggregator is ChainlinkClient, Ownable {
             uint256 fee
         )
     {
+        // temporary zero placeholders for compatibility
         return (
-            chainlinkOracle,
+            address(0), //placeholder
             _chainlinkTokenAddress(),
-            chainlinkJobId,
-            chainlinkFee
+            bytes32(0), //placeholder
+            0 //placeholder
         );
     }
 
