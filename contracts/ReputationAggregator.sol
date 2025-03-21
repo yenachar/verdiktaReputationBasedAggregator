@@ -126,14 +126,16 @@ contract ReputationAggregator is ChainlinkClient, Ownable {
         maxOracleFee = _maxOracleFee;
     }
     
-    /**
-     * @notice Calculate the maximum total fee that might be required
-     * @return The maximum total fee (maxOracleFee * (oraclesToPoll + clusterSize))
-     */
-    function maxTotalFee() public view returns (uint256) {
-        return maxOracleFee * (oraclesToPoll + clusterSize);
-    }
-    
+   /**
+    * @notice Calculate the maximum total fee that might be required based on provided max oracle fee
+    * @param requestedMaxOracleFee The requested maximum oracle fee which may be lower than the contract's maxOracleFee
+    * @return The maximum total fee (min(requestedMaxOracleFee, maxOracleFee) * (oraclesToPoll + clusterSize))
+    */
+   function maxTotalFee(uint256 requestedMaxOracleFee) public view returns (uint256) {
+       uint256 effectiveMaxOracleFee = requestedMaxOracleFee < maxOracleFee ? requestedMaxOracleFee : maxOracleFee;
+       return effectiveMaxOracleFee * (oraclesToPoll + clusterSize);
+   } 
+
     /**
      * @notice Set the base fee percentage (as a percentage of maxOracleFee)
      * @param _baseFeePct The base fee percentage (1-100)
