@@ -42,7 +42,6 @@ contract ReputationAggregator is ChainlinkClient, Ownable {
     // ------------------------------------------------------------------------
     event RequestAIEvaluation(bytes32 indexed requestId, string[] cids);
     event FulfillAIEvaluation(bytes32 indexed requestId, uint256[] aggregatedLikelihoods, string combinedJustificationCIDs);
-    event Debug1(address linkToken, address oracle, uint256 fee, uint256 balance, bytes32 jobId);
     event OracleScoreUpdateSkipped(address indexed oracle, bytes32 indexed jobId, string reason);
     event NewOracleResponseRecorded(bytes32 requestId, uint256 pollIndex, address operator);
     event BonusPayment(address indexed operator, uint256 bonusFee);
