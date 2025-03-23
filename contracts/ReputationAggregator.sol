@@ -3,6 +3,8 @@ pragma solidity ^0.8.21;
 
 import "@chainlink/contracts/src/v0.8/ChainlinkClient.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
+// import "@openzeppelin/contracts/security/ReentrancyGuard.sol"; // (1) Import ReentrancyGuard
+import "@openzeppelin/contracts/utils/ReentrancyGuard.sol"; // (1) Import ReentrancyGuard
 import "./ReputationKeeper.sol";
 
 /**
@@ -15,7 +17,7 @@ import "./ReputationKeeper.sol";
  *         The contract withdraws exactly the fee required for each oracle call (and later bonus payments).
  *         The caller also supplies parameters for oracle selection.
  */
-contract ReputationAggregator is ChainlinkClient, Ownable {
+contract ReputationAggregator is ChainlinkClient, Ownable, ReentrancyGuard { // (2) Inherit ReentrancyGuard
     using Chainlink for Chainlink.Request;
 
     // ------------------------------------------------------------------------
@@ -203,11 +205,37 @@ contract ReputationAggregator is ChainlinkClient, Ownable {
         uint256 _maxOracleFee,
         uint256 _estimatedBaseCost,
         uint256 _maxFeeBasedScalingFactor
-    ) public returns (bytes32) {
+    ) 
+        public 
+        nonReentrant // (3) Protect this function with nonReentrant 
+        returns (bytes32) 
+    {
         require(address(reputationKeeper) != address(0), "ReputationKeeper not set");
         require(cids.length > 0, "CIDs array must not be empty");
 
-        // Use the provided parameters for oracle selection.
+        // -------------------------------------------------------
+        // Checks & Effects first (internal state updates)
+        // -------------------------------------------------------
+        string memory cidsConcatenated = concatenateCids(cids);
+        bytes32 aggregatorRequestId = keccak256(
+            abi.encodePacked(
+                block.timestamp,
+                msg.sender,
+                cidsConcatenated
+            )
+        );
+
+        AggregatedEvaluation storage aggEval = aggregatedEvaluations[aggregatorRequestId];
+        aggEval.expectedResponses = oraclesToPoll;
+        aggEval.requiredResponses = requiredResponses;
+        aggEval.clusterSize = clusterSize;
+        aggEval.isComplete = false;
+        aggEval.userFunded = true;
+        aggEval.requester = msg.sender;
+
+        // -------------------------------------------------------
+        // Now call external selection function (view from Keeper)
+        // -------------------------------------------------------
         ReputationKeeper.OracleIdentity[] memory selectedOracles = reputationKeeper.selectOracles(
             oraclesToPoll,
             _alpha,
@@ -217,23 +245,9 @@ contract ReputationAggregator is ChainlinkClient, Ownable {
         );
         reputationKeeper.recordUsedOracles(selectedOracles);
 
-        string memory cidsConcatenated = concatenateCids(cids);
-        bytes32 aggregatorRequestId = keccak256(abi.encodePacked(
-            block.timestamp,
-            msg.sender,
-            cidsConcatenated
-        ));
-
-        AggregatedEvaluation storage aggEval = aggregatedEvaluations[aggregatorRequestId];
-        aggEval.expectedResponses = oraclesToPoll;
-        aggEval.requiredResponses = requiredResponses;
-        aggEval.clusterSize = clusterSize;
-        aggEval.isComplete = false;
-        // Mark this evaluation as user funded and record the requester.
-        aggEval.userFunded = true;
-        aggEval.requester = msg.sender;
-
-        // For each selected oracle, withdraw the fee from the user and send a request.
+        // -------------------------------------------------------
+        // Interactions (transfers & sending requests)
+        // -------------------------------------------------------
         for (uint256 i = 0; i < selectedOracles.length; i++) {
             aggEval.polledOracles.push(selectedOracles[i]);
 
@@ -320,7 +334,7 @@ contract ReputationAggregator is ChainlinkClient, Ownable {
     // ------------------------------------------------------------------------
     // _finalizeAggregation: Processes responses and pays bonus fees.
     // ------------------------------------------------------------------------
-    function _finalizeAggregation(bytes32 aggregatorRequestId) internal {
+    function _finalizeAggregation(bytes32 aggregatorRequestId) internal nonReentrant { // (4) nonReentrant
         AggregatedEvaluation storage aggEval = aggregatedEvaluations[aggregatorRequestId];
 
         uint256 selectedCount = 0;
@@ -460,7 +474,7 @@ contract ReputationAggregator is ChainlinkClient, Ownable {
     // New helper: _payBonus
     // Separates the bonus payment logic to reduce stack depth.
     // If the evaluation is user funded, it withdraws the bonus fee from the requester first,
-    // then transfers the bonus fee to the operator.
+    // then transfers the bonus fee to the operator using `transfer` not `transferAndCall`.
     // ------------------------------------------------------------------------
     function _payBonus(
         address requester,
@@ -475,6 +489,7 @@ contract ReputationAggregator is ChainlinkClient, Ownable {
                 "Bonus fee transferFrom failed"
             );
         }
+        // (5) Use link.transfer, not transferAndCall, to prevent callback reentrancy
         uint256 balanceBefore = link.balanceOf(address(this));
         bool transferSuccess = link.transfer(operator, bonusFee);
         uint256 balanceAfter = link.balanceOf(address(this));
@@ -524,7 +539,11 @@ contract ReputationAggregator is ChainlinkClient, Ownable {
     // ------------------------------------------------------------------------
     // Clustering logic: returns an array indicating which selected responses are in the best cluster.
     // ------------------------------------------------------------------------
-    function _findBestClusterFromResponses(Response[] memory responses, uint256[] memory selectedResponseIndices) internal pure returns (uint256[] memory) {
+    function _findBestClusterFromResponses(Response[] memory responses, uint256[] memory selectedResponseIndices)
+        internal
+        pure
+        returns (uint256[] memory)
+    {
         uint256 count = selectedResponseIndices.length;
         require(count >= 2, "Need at least 2 responses");
         uint256[] memory bestCluster = new uint256[](count);
@@ -534,7 +553,10 @@ contract ReputationAggregator is ChainlinkClient, Ownable {
                 uint256 respIndexA = selectedResponseIndices[i];
                 uint256 respIndexB = selectedResponseIndices[j];
                 if (respIndexA >= responses.length || respIndexB >= responses.length) continue;
-                uint256 dist = _calculateDistance(responses[respIndexA].likelihoods, responses[respIndexB].likelihoods);
+                uint256 dist = _calculateDistance(
+                    responses[respIndexA].likelihoods,
+                    responses[respIndexB].likelihoods
+                );
                 if (dist < bestDistance) {
                     bestDistance = dist;
                     for (uint256 x = 0; x < count; x++) {
@@ -629,3 +651,4 @@ contract ReputationAggregator is ChainlinkClient, Ownable {
         require(link.transfer(_to, _amount), "LINK transfer failed");
     }
 }
+
