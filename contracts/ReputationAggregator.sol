@@ -41,6 +41,7 @@ contract ReputationAggregator is ChainlinkClient, Ownable, ReentrancyGuard { // 
     // ------------------------------------------------------------------------
     uint256 public constant MAX_CID_COUNT = 10;
     uint256 public constant MAX_CID_LENGTH = 100;
+    uint256 public constant MAX_ADDENDUM_LENGTH = 1000;
 
     // Reference to the ReputationKeeper contract.
     ReputationKeeper public reputationKeeper;
@@ -209,6 +210,7 @@ contract ReputationAggregator is ChainlinkClient, Ownable, ReentrancyGuard { // 
     // ------------------------------------------------------------------------
     function requestAIEvaluationWithApproval(
         string[] memory cids,
+        string memory addendumText,
         uint256 _alpha,
         uint256 _maxOracleFee,
         uint256 _estimatedBaseCost,
@@ -224,9 +226,18 @@ contract ReputationAggregator is ChainlinkClient, Ownable, ReentrancyGuard { // 
         for (uint256 i = 0; i < cids.length; i++) {
             require(bytes(cids[i]).length <= MAX_CID_LENGTH, "CID string too long");
         }
+        require(bytes(addendumText).length <= MAX_ADDENDUM_LENGTH, "Addendum text string too long");
 
-        // Concatenate CIDs.
-        string memory cidsConcatenated = concatenateCids(cids);
+        // Concatenate CIDs (comma delimited) and append the optional addendum string for oracle consumption.
+        bytes memory concatenatedBytes;
+        for (uint i = 0; i < cids.length; i++) 
+            concatenatedBytes = abi.encodePacked(concatenatedBytes, cids[i], i < cids.length - 1 ? "," : "");
+        string memory cidsConcatenated = string(concatenatedBytes);
+
+        if (bytes(addendumText).length > 0) {
+            cidsConcatenated = string(abi.encodePacked(cidsConcatenated, ":", addendumText));
+        }
+
         bytes32 aggregatorRequestId = keccak256(
             abi.encodePacked(
                 block.timestamp,
