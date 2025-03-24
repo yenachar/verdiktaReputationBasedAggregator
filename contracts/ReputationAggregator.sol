@@ -36,6 +36,12 @@ contract ReputationAggregator is ChainlinkClient, Ownable, ReentrancyGuard { // 
     uint256 public baseFeePct = 1;      // Base fee percentage of maxOracleFee (default 1%)
     uint256 public maxFeeBasedScalingFactor = 10; // Maximum scaling factor
 
+    // ------------------------------------------------------------------------
+    // Limits for CID inputs (added)
+    // ------------------------------------------------------------------------
+    uint256 public constant MAX_CID_COUNT = 10;
+    uint256 public constant MAX_CID_LENGTH = 100;
+
     // Reference to the ReputationKeeper contract.
     ReputationKeeper public reputationKeeper;
 
@@ -212,10 +218,12 @@ contract ReputationAggregator is ChainlinkClient, Ownable, ReentrancyGuard { // 
     {
         require(address(reputationKeeper) != address(0), "ReputationKeeper not set");
         require(cids.length > 0, "CIDs array must not be empty");
+        require(cids.length <= MAX_CID_COUNT, "Too many CIDs provided");
+        for (uint256 i = 0; i < cids.length; i++) {
+            require(bytes(cids[i]).length <= MAX_CID_LENGTH, "CID string too long");
+        }
 
-        // -------------------------------------------------------
-        // Checks & Effects first (internal state updates)
-        // -------------------------------------------------------
+        // Concatenate CIDs.
         string memory cidsConcatenated = concatenateCids(cids);
         bytes32 aggregatorRequestId = keccak256(
             abi.encodePacked(
