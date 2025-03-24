@@ -89,6 +89,8 @@ contract ReputationAggregator is ChainlinkClient, Ownable, ReentrancyGuard { // 
         // In user-funded mode:
         bool userFunded;
         address requester;
+        // --- New field: store only the combined clustered justifications ---
+        string combinedJustificationCIDs;
     }
 
     // Mapping from aggregator-level requestId to its evaluation.
@@ -399,22 +401,19 @@ contract ReputationAggregator is ChainlinkClient, Ownable, ReentrancyGuard { // 
 
         string memory combinedCIDs = "";
         bool first = true;
-        for (uint256 slot = 0; slot < m; slot++) {
-            uint256 respIdx = _findResponseIndexForSlot(aggEval.responses, slot);
-            if (respIdx < aggEval.responses.length) {
+        for (uint256 i = 0; i < selectedResponseIndices.length; i++) {
+            if (clusterResults[i] == 1) {
+                uint256 respIdx = selectedResponseIndices[i];
                 Response memory resp = aggEval.responses[respIdx];
-                if (resp.selected) {
-                    (bool found, uint256 selIndex) = _findIndexInArray(selectedResponseIndices, respIdx);
-                    if (found && clusterResults[selIndex] == 1) {
-                        if (!first) {
-                            combinedCIDs = string(abi.encodePacked(combinedCIDs, ","));
-                        }
-                        combinedCIDs = string(abi.encodePacked(combinedCIDs, resp.justificationCID));
-                        first = false;
-                    }
+                if (!first) {
+                    combinedCIDs = string(abi.encodePacked(combinedCIDs, ","));
                 }
+                combinedCIDs = string(abi.encodePacked(combinedCIDs, resp.justificationCID));
+                first = false;
             }
         }
+        // Save the clustered justifications so that getEvaluation returns only these.
+        aggEval.combinedJustificationCIDs = combinedCIDs;
 
         aggEval.isComplete = true;
         emit FulfillAIEvaluation(aggregatorRequestId, aggEval.aggregatedLikelihoods, combinedCIDs);
@@ -599,18 +598,8 @@ contract ReputationAggregator is ChainlinkClient, Ownable, ReentrancyGuard { // 
         )
     {
         AggregatedEvaluation storage aggEval = aggregatedEvaluations[requestId];
-        string memory finalCIDs = "";
-        bool first = true;
-        for (uint256 i = 0; i < aggEval.responses.length; i++) {
-            if (aggEval.responses[i].selected) {
-                if (!first) {
-                    finalCIDs = string(abi.encodePacked(finalCIDs, ","));
-                }
-                finalCIDs = string(abi.encodePacked(finalCIDs, aggEval.responses[i].justificationCID));
-                first = false;
-            }
-        }
-        return (aggEval.aggregatedLikelihoods, finalCIDs, aggEval.responseCount > 0);
+        // Return only the clustered (combined) justifications.
+        return (aggEval.aggregatedLikelihoods, aggEval.combinedJustificationCIDs, aggEval.responseCount > 0);
     }
 
     function evaluations(bytes32 requestId) public view returns (uint256[] memory, string memory) {
