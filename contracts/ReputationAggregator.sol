@@ -26,7 +26,7 @@ contract ReputationAggregator is ChainlinkClient, Ownable, ReentrancyGuard { // 
     uint256 public oraclesToPoll;       // Total oracles to poll (M)
     uint256 public requiredResponses;   // First N responses to consider (N)
     uint256 public clusterSize;         // Cluster size (P)
-    uint256 public responseTimeoutSeconds = 300; // Timeout in seconds for responses
+    uint256 public responseTimeoutSeconds = 300; // Timeout in seconds for responses (default: 5 minutes)
     uint256 public alpha = 500;         // Reputation weight
 
     // Owner-settable maximum fee for selecting oracles.
@@ -61,6 +61,7 @@ contract ReputationAggregator is ChainlinkClient, Ownable, ReentrancyGuard { // 
         uint256 balanceAfter,
         bool success
     );
+    event EvaluationTimedOut(bytes32 indexed aggregatorRequestId);
 
     // ------------------------------------------------------------------------
     // Structures
@@ -92,6 +93,8 @@ contract ReputationAggregator is ChainlinkClient, Ownable, ReentrancyGuard { // 
         address requester;
         // --- New field: store only the combined clustered justifications ---
         string combinedJustificationCIDs;
+        // --- New field: record when the evaluation was created ---
+        uint256 startTimestamp;
     }
 
     // Mapping from aggregator-level requestId to its evaluation.
@@ -205,8 +208,7 @@ contract ReputationAggregator is ChainlinkClient, Ownable, ReentrancyGuard { // 
     // The caller must have approved this contract for at least:
     //     maxOracleFee * (oraclesToPoll + clusterSize)
     // The contract withdraws exactly the fee needed for each oracle call and bonus payment.
-    // Additionally, the caller passes in values for alpha, maxOracleFee, estimatedBaseCost, and maxFeeBasedScalingFactor,
-    // which are used for oracle selection.
+    // Additionally, the caller passes in values for oracle selection parameters.
     // ------------------------------------------------------------------------
     function requestAIEvaluationWithApproval(
         string[] memory cids,
@@ -217,7 +219,7 @@ contract ReputationAggregator is ChainlinkClient, Ownable, ReentrancyGuard { // 
         uint256 _maxFeeBasedScalingFactor
     ) 
         public 
-        nonReentrant // (3) Protect this function with nonReentrant 
+        nonReentrant
         returns (bytes32) 
     {
         require(address(reputationKeeper) != address(0), "ReputationKeeper not set");
@@ -253,6 +255,8 @@ contract ReputationAggregator is ChainlinkClient, Ownable, ReentrancyGuard { // 
         aggEval.isComplete = false;
         aggEval.userFunded = true;
         aggEval.requester = msg.sender;
+        // Set the start timestamp to allow timeout checking later
+        aggEval.startTimestamp = block.timestamp;
 
         // -------------------------------------------------------
         // Now call external selection function (view from Keeper)
@@ -292,6 +296,20 @@ contract ReputationAggregator is ChainlinkClient, Ownable, ReentrancyGuard { // 
 
         emit RequestAIEvaluation(aggregatorRequestId, cids);
         return aggregatorRequestId;
+    }
+
+    // ------------------------------------------------------------------------
+    // New function: Finalize an evaluation if the response timeout has been exceeded.
+    // If not enough responses have been received when the timeout is reached, the function fails.
+    // ------------------------------------------------------------------------
+    function finalizeEvaluationTimeout(bytes32 aggregatorRequestId) external nonReentrant {
+        AggregatedEvaluation storage aggEval = aggregatedEvaluations[aggregatorRequestId];
+        require(!aggEval.isComplete, "Aggregation already completed");
+        require(block.timestamp >= aggEval.startTimestamp + responseTimeoutSeconds, "Evaluation not yet timed out");
+        require(aggEval.responseCount >= aggEval.requiredResponses, "Not enough responses; evaluation failed");
+
+        _finalizeAggregation(aggregatorRequestId);
+        emit EvaluationTimedOut(aggregatorRequestId);
     }
 
     // ------------------------------------------------------------------------
@@ -355,7 +373,7 @@ contract ReputationAggregator is ChainlinkClient, Ownable, ReentrancyGuard { // 
     // ------------------------------------------------------------------------
     // _finalizeAggregation: Processes responses and pays bonus fees.
     // ------------------------------------------------------------------------
-    function _finalizeAggregation(bytes32 aggregatorRequestId) internal nonReentrant { // (4) nonReentrant
+    function _finalizeAggregation(bytes32 aggregatorRequestId) internal nonReentrant {
         AggregatedEvaluation storage aggEval = aggregatedEvaluations[aggregatorRequestId];
 
         uint256 selectedCount = 0;
@@ -507,7 +525,6 @@ contract ReputationAggregator is ChainlinkClient, Ownable, ReentrancyGuard { // 
                 "Bonus fee transferFrom failed"
             );
         }
-        // (5) Use link.transfer, not transferAndCall, to prevent callback reentrancy
         uint256 balanceBefore = link.balanceOf(address(this));
         bool transferSuccess = link.transfer(operator, bonusFee);
         uint256 balanceAfter = link.balanceOf(address(this));
@@ -609,7 +626,6 @@ contract ReputationAggregator is ChainlinkClient, Ownable, ReentrancyGuard { // 
         )
     {
         AggregatedEvaluation storage aggEval = aggregatedEvaluations[requestId];
-        // Return only the clustered (combined) justifications.
         return (aggEval.aggregatedLikelihoods, aggEval.combinedJustificationCIDs, aggEval.responseCount > 0);
     }
 
