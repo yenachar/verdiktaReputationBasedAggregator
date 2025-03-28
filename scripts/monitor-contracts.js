@@ -66,6 +66,12 @@ module.exports = async function(callback) {
         console.log(`\nOracle Address: ${oracleEntry.oracle}`);
         console.log(`Job ID (raw bytes32): ${oracleEntry.jobId}`);
         console.log(`Quality,Timeliness Scores: ${oracleInfo.qualityScore.toString()},${oracleInfo.timelinessScore.toString()}`);
+        try {
+          const classes = await keeper.getOracleClassesByKey(oracleEntry.oracle, oracleEntry.jobId);
+          console.log(`Classes: ${classes}`);
+        } catch (err) {
+          console.log(`Classes: Not available`);
+        }
         //console.log(`Call Count: ${oracleInfo.callCount.toString()}`);
         //console.log(`Locked Until: ${oracleInfo.lockedUntil.toString()}`);
         //console.log(`Blocked: ${oracleInfo.blocked}`);

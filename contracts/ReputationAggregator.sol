@@ -3,8 +3,7 @@ pragma solidity ^0.8.21;
 
 import "@chainlink/contracts/src/v0.8/ChainlinkClient.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
-// import "@openzeppelin/contracts/security/ReentrancyGuard.sol"; // (1) Import ReentrancyGuard
-import "@openzeppelin/contracts/utils/ReentrancyGuard.sol"; // (1) Import ReentrancyGuard
+import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "./ReputationKeeper.sol";
 
 /**
@@ -17,7 +16,7 @@ import "./ReputationKeeper.sol";
  *         The contract withdraws exactly the fee required for each oracle call (and later bonus payments).
  *         The caller also supplies parameters for oracle selection.
  */
-contract ReputationAggregator is ChainlinkClient, Ownable, ReentrancyGuard { // (2) Inherit ReentrancyGuard
+contract ReputationAggregator is ChainlinkClient, Ownable, ReentrancyGuard {
     using Chainlink for Chainlink.Request;
 
     // ------------------------------------------------------------------------
@@ -216,7 +215,8 @@ contract ReputationAggregator is ChainlinkClient, Ownable, ReentrancyGuard { // 
         uint256 _alpha,
         uint256 _maxOracleFee,
         uint256 _estimatedBaseCost,
-        uint256 _maxFeeBasedScalingFactor
+        uint256 _maxFeeBasedScalingFactor,
+        uint64 _requestedClass   // <-- New parameter: requested oracle class
     ) 
         public 
         nonReentrant
@@ -266,7 +266,8 @@ contract ReputationAggregator is ChainlinkClient, Ownable, ReentrancyGuard { // 
             _alpha,
             _maxOracleFee,
             _estimatedBaseCost,
-            _maxFeeBasedScalingFactor
+            _maxFeeBasedScalingFactor,
+            _requestedClass  // Pass the requested class to filter oracles
         );
         reputationKeeper.recordUsedOracles(selectedOracles);
 
@@ -509,8 +510,6 @@ contract ReputationAggregator is ChainlinkClient, Ownable, ReentrancyGuard { // 
     // ------------------------------------------------------------------------
     // New helper: _payBonus
     // Separates the bonus payment logic to reduce stack depth.
-    // If the evaluation is user funded, it withdraws the bonus fee from the requester first,
-    // then transfers the bonus fee to the operator using `transfer` not `transferAndCall`.
     // ------------------------------------------------------------------------
     function _payBonus(
         address requester,

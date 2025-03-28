@@ -19,6 +19,7 @@ contract ReputationKeeper is Ownable {
     struct OracleIdentity {
         address oracle;
         bytes32 jobId;
+        uint64[] classes; // <-- New field: list of classes (up to 5) supported by this oracle
     }
 
     // A single record of (qualityScore, timelinessScore).
@@ -41,6 +42,8 @@ contract ReputationKeeper is Ownable {
         // New fields for slashing/locking:
         uint256 lockedUntil;    // Timestamp until which the oracle is locked (cannot be unregistered)
         bool blocked;           // If true, oracle is blocked from selection
+
+        uint64[] classes;       // <-- New field: classes for this oracle
     }
     
     // Per–contract usage data.
@@ -90,11 +93,17 @@ contract ReputationKeeper is Ownable {
     
     /**
      * @notice Register an oracle under a specific job ID.
+     * @param _oracle The address of the oracle.
+     * @param _jobId The job identifier.
+     * @param fee The fee required for this job.
+     * @param _classes A vector of up to five 64-bit numbers representing the classes the oracle supports.
      */
-    function registerOracle(address _oracle, bytes32 _jobId, uint256 fee) external {
+    function registerOracle(address _oracle, bytes32 _jobId, uint256 fee, uint64[] memory _classes) external {
         bytes32 key = _oracleKey(_oracle, _jobId);
         require(!oracles[key].isActive, "Oracle already registered");
         require(fee > 0, "Fee must be greater than 0");
+        require(_classes.length > 0, "At least one class must be provided");
+        require(_classes.length <= 5, "A maximum of 5 classes allowed");
         
         require(
             msg.sender == owner() || msg.sender == IOracleOwner(_oracle).owner(),
@@ -115,6 +124,7 @@ contract ReputationKeeper is Ownable {
         info.callCount = 0;
         info.lockedUntil = 0; // initially not locked
         info.blocked = false; // initially not blocked
+        info.classes = _classes; // Save the oracle classes
         
         // Record the identity if not already present.
         bool exists = false;
@@ -125,7 +135,11 @@ contract ReputationKeeper is Ownable {
             }
         }
         if (!exists) {
-            registeredOracles.push(OracleIdentity({oracle: _oracle, jobId: _jobId}));
+            registeredOracles.push(OracleIdentity({
+                oracle: _oracle, 
+                jobId: _jobId,
+                classes: _classes   // Save the classes in the identity
+            }));
         }
         
         emit OracleRegistered(_oracle, _jobId, fee);
@@ -343,6 +357,7 @@ contract ReputationKeeper is Ownable {
      * @param maxFee Maximum fee the user is willing to pay
      * @param estimatedBaseCost Estimated base cost for processing the request
      * @param maxFeeBasedScalingFactor Maximum scaling factor for fee weighting
+     * @param requestedClass The class (a 64-bit number) that the caller wants the oracle to support
      * @return Array of selected oracle identities
      */
     function selectOracles(
@@ -350,7 +365,8 @@ contract ReputationKeeper is Ownable {
         uint256 alpha,
         uint256 maxFee,
         uint256 estimatedBaseCost,
-        uint256 maxFeeBasedScalingFactor
+        uint256 maxFeeBasedScalingFactor,
+        uint64 requestedClass   // <-- New parameter for filtering by class
     ) external view returns (OracleIdentity[] memory) {
         require(approvedContracts[msg.sender].isApproved, "Not approved to select oracles");
         require(estimatedBaseCost < maxFee, "Base cost must be less than max fee");
@@ -360,23 +376,27 @@ contract ReputationKeeper is Ownable {
         for (uint256 i = 0; i < registeredOracles.length; i++) {
             OracleIdentity storage id = registeredOracles[i];
             bytes32 key = _oracleKey(id.oracle, id.jobId);
-            if (oracles[key].isActive &&
+            if (
+                oracles[key].isActive &&
                 oracles[key].fee <= maxFee &&
-                (!(oracles[key].blocked && block.timestamp < oracles[key].lockedUntil))
+                (!(oracles[key].blocked && block.timestamp < oracles[key].lockedUntil)) &&
+                _hasClass(id.classes, requestedClass)
             ) {
                 activeCount++;
             }
         }
-        require(activeCount > 0, "No active oracles available with fee <= maxFee");
+        require(activeCount > 0, "No active oracles available with fee <= maxFee and requested class");
         
         OracleIdentity[] memory activeOracles = new OracleIdentity[](activeCount);
         uint256 idx = 0;
         for (uint256 i = 0; i < registeredOracles.length; i++) {
             OracleIdentity storage id = registeredOracles[i];
             bytes32 key = _oracleKey(id.oracle, id.jobId);
-            if (oracles[key].isActive &&
+            if (
+                oracles[key].isActive &&
                 oracles[key].fee <= maxFee &&
-                (!(oracles[key].blocked && block.timestamp < oracles[key].lockedUntil))
+                (!(oracles[key].blocked && block.timestamp < oracles[key].lockedUntil)) &&
+                _hasClass(id.classes, requestedClass)
             ) {
                 activeOracles[idx] = id;
                 idx++;
@@ -485,5 +505,33 @@ contract ReputationKeeper is Ownable {
     function getRegisteredOraclesCount() external view returns (uint256) {
         return registeredOracles.length;
     }
-}
 
+    // ------------------------------------------------------------------------
+    // Internal helper: Check if the given classes array contains the requested class.
+    // ------------------------------------------------------------------------
+    function _hasClass(uint64[] memory classes, uint64 requestedClass) internal pure returns (bool) {
+        for (uint256 i = 0; i < classes.length; i++) {
+            if (classes[i] == requestedClass) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    function getOracleClasses(uint256 index) public view returns (uint64[] memory) {
+        require(index < registeredOracles.length, "Index out of bounds");
+        return registeredOracles[index].classes;
+    }
+
+    function getOracleClassesByKey(address _oracle, bytes32 _jobId) public view returns (uint64[] memory) {
+        for (uint256 i = 0; i < registeredOracles.length; i++) {
+            if (registeredOracles[i].oracle == _oracle && registeredOracles[i].jobId == _jobId) {
+                return registeredOracles[i].classes;
+            }
+        }
+        revert("Oracle not found");
+    }
+
+
+}
+ 

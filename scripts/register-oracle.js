@@ -77,15 +77,17 @@ module.exports = async function(callback) {
         console.log('wVDKA spend approved');
 
         // Register oracle with the current jobId
-        console.log(`Registering oracle for jobID ${currentJobIdString}...`);
+        // Note: We now pass [128] as the oracle's class vector.
+        console.log(`Registering oracle for jobID ${currentJobIdString} with class type 128...`);
         console.log('Registering with params:', {
             oracleAddress,
             jobId,
             linkFee,
+            classes: [128],
             from: owner,
             keeper: keeper.address
         });
-        await keeper.registerOracle(oracleAddress, jobId, linkFee, { from: owner });
+        await keeper.registerOracle(oracleAddress, jobId, linkFee, [128], { from: owner });
         console.log(`Oracle registered successfully for jobID ${currentJobIdString}`);
       }
     }
@@ -121,18 +123,6 @@ module.exports = async function(callback) {
         currentAllowance: currentLinkAllowance.toString()
     });
     
-    // Approve a large amount of LINK
-    // const maxLinkApproval = "115792089237316195423570985008687907853269984665640564039457584007913129639935"; // max uint256
-    // console.log('Approving LINK token spending...');
-
-    // Approve for oracle
-    // await linkToken.approve(oracleAddress, maxLinkApproval, { from: owner });
-    // console.log('LINK spending approved for oracle');
-    
-    // Approve for aggregator
-    // await linkToken.approve(aggregator.address, maxLinkApproval, { from: owner });
-    // console.log('LINK spending approved for aggregator');
-
     // Verify allowances
     const newOracleAllowance = await linkToken.allowance(owner, oracleAddress);
     const newAggregatorAllowance = await linkToken.allowance(owner, aggregator.address);
@@ -149,3 +139,4 @@ module.exports = async function(callback) {
     callback(error);
   }
 };
+
