@@ -48,7 +48,7 @@ module.exports = async function(callback) {
       });
 
       if (oracleInfo.isActive) {
-          console.log(`Oracle for jobID ${currentJobIdString} is already registered. Proceeding with LINK approval...`);
+          console.log(`Oracle for jobID ${currentJobIdString} is already registered. Proceeding with approval...`);
       } else {
         // Log addresses for verification
         console.log('Using contracts:');
@@ -83,11 +83,11 @@ module.exports = async function(callback) {
             oracleAddress,
             jobId,
             linkFee,
-            classes: [128],
+            classes: [128,129+i],
             from: owner,
             keeper: keeper.address
         });
-        await keeper.registerOracle(oracleAddress, jobId, linkFee, [128], { from: owner });
+        await keeper.registerOracle(oracleAddress, jobId, linkFee, [128,129+i], { from: owner });
         console.log(`Oracle registered successfully for jobID ${currentJobIdString}`);
       }
     }
