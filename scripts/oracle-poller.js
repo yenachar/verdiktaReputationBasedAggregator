@@ -121,6 +121,8 @@ module.exports = async function(callback) {
 	console.log(`Blocked: ${oracle.info.blocked}`);
         // Convert the jobId from bytes32 to a readable string.
         console.log(`Job ID: ${web3.utils.hexToAscii(oracle.jobId)}`);
+	const classes = await keeper.getOracleClassesByKey(oracle.address, oracle.jobId);
+	console.log(`Capability Classes: ${classes}`);
         console.log(`Fee: ${oracle.info.fee.toString()}`);
 
         // Create a minimal contract instance to query the owner() function.
