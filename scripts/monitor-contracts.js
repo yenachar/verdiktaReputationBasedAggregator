@@ -58,7 +58,8 @@ module.exports = async function(callback) {
     if (uniqueOracles.size === 0) {
       console.log("No registered oracles found");
     } else {
-      console.log("Registered oracles found. Active ones:");
+      console.log("Active registered oracles:");
+      let activeCount=0;
       for (const [key, oracleEntry] of uniqueOracles.entries()) {
         const oracleInfo = await keeper.getOracleInfo(oracleEntry.oracle, oracleEntry.jobId);
 	if(oracleInfo.isActive)
@@ -66,6 +67,7 @@ module.exports = async function(callback) {
         console.log(`\nOracle Address: ${oracleEntry.oracle}`);
         console.log(`Job ID (raw bytes32): ${oracleEntry.jobId}`);
         console.log(`Quality,Timeliness Scores: ${oracleInfo.qualityScore.toString()},${oracleInfo.timelinessScore.toString()}`);
+        activeCount++;
         try {
           const classes = await keeper.getOracleClassesByKey(oracleEntry.oracle, oracleEntry.jobId);
           console.log(`Classes: ${classes}`);
@@ -76,6 +78,9 @@ module.exports = async function(callback) {
         //console.log(`Locked Until: ${oracleInfo.lockedUntil.toString()}`);
         //console.log(`Blocked: ${oracleInfo.blocked}`);
 	}
+      }
+      if(activeCount==0) {
+	      console.log("None of the registered oracles are active.");
       }
     }
 
