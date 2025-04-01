@@ -5,7 +5,6 @@ import "@openzeppelin/contracts/access/Ownable.sol";
 import "./VerdiktaToken.sol";
 
 /// @notice Minimal interface to query an oracle contract's owner.
-/// It assumes the oracle contract implements an owner() function.
 interface IOracleOwner {
     function owner() external view returns (address);
 }
@@ -19,7 +18,7 @@ contract ReputationKeeper is Ownable {
     struct OracleIdentity {
         address oracle;
         bytes32 jobId;
-        uint64[] classes; // <-- New field: list of classes (up to 5) supported by this oracle
+        uint64[] classes; // list of classes (up to 5) supported by this oracle
     }
 
     // A single record of (qualityScore, timelinessScore).
@@ -38,12 +37,9 @@ contract ReputationKeeper is Ownable {
         uint256 fee;            // LINK fee required for this job
         uint256 callCount;      // Number of times this oracle has been called
         ScoreRecord[] recentScores; // Rolling history of scores
-        
-        // New fields for slashing/locking:
         uint256 lockedUntil;    // Timestamp until which the oracle is locked (cannot be unregistered)
         bool blocked;           // If true, oracle is blocked from selection
-
-        uint64[] classes;       // <-- New field: classes for this oracle
+        uint64[] classes;       // classes for this oracle
     }
     
     // Per–contract usage data.
@@ -53,6 +49,14 @@ contract ReputationKeeper is Ownable {
         mapping(bytes32 => bool) usedOracles;
     }
     
+    // Group selection parameters into one struct to reduce stack usage.
+    struct SelectionParams {
+        uint256 alpha;
+        uint256 maxFee;
+        uint256 estimatedBaseCost;
+        uint256 maxFeeBasedScalingFactor;
+    }
+
     VerdiktaToken public verdiktaToken;
 
     // Composite key (oracle, jobID) → OracleInfo.
@@ -75,6 +79,10 @@ contract ReputationKeeper is Ownable {
     int256 public severeThreshold = -40;               // Severe threshold (configurable)
     int256 public mildThreshold = -20;                 // Mild threshold (configurable)
     
+    // The maximum number of oracles to weight in the second-stage selection.
+    // Default is 20 but can be updated by the owner.
+    uint256 public shortlistSize = 20;
+    
     event OracleRegistered(address indexed oracle, bytes32 jobId, uint256 fee);
     event OracleDeregistered(address indexed oracle, bytes32 jobId);
     event ScoreUpdated(address indexed oracle, int256 newQualityScore, int256 newTimelinessScore);
@@ -93,12 +101,13 @@ contract ReputationKeeper is Ownable {
     
     /**
      * @notice Register an oracle under a specific job ID.
-     * @param _oracle The address of the oracle.
-     * @param _jobId The job identifier.
-     * @param fee The fee required for this job.
-     * @param _classes A vector of up to five 64-bit numbers representing the classes the oracle supports.
      */
-    function registerOracle(address _oracle, bytes32 _jobId, uint256 fee, uint64[] memory _classes) external {
+    function registerOracle(
+        address _oracle,
+        bytes32 _jobId,
+        uint256 fee,
+        uint64[] memory _classes
+    ) external {
         bytes32 key = _oracleKey(_oracle, _jobId);
         require(!oracles[key].isActive, "Oracle already registered");
         require(fee > 0, "Fee must be greater than 0");
@@ -122,9 +131,9 @@ contract ReputationKeeper is Ownable {
         info.jobId = _jobId;
         info.fee = fee;
         info.callCount = 0;
-        info.lockedUntil = 0; // initially not locked
-        info.blocked = false; // initially not blocked
-        info.classes = _classes; // Save the oracle classes
+        info.lockedUntil = 0;
+        info.blocked = false;
+        info.classes = _classes;
         
         // Record the identity if not already present.
         bool exists = false;
@@ -138,7 +147,7 @@ contract ReputationKeeper is Ownable {
             registeredOracles.push(OracleIdentity({
                 oracle: _oracle, 
                 jobId: _jobId,
-                classes: _classes   // Save the classes in the identity
+                classes: _classes
             }));
         }
         
@@ -147,8 +156,6 @@ contract ReputationKeeper is Ownable {
     
     /**
      * @notice Deregister an oracle identity.
-     * Requirements:
-     * - The oracle must not be locked (i.e. block.timestamp must be past lockedUntil).
      */
     function deregisterOracle(address _oracle, bytes32 _jobId) external {
         bytes32 key = _oracleKey(_oracle, _jobId);
@@ -204,9 +211,6 @@ contract ReputationKeeper is Ownable {
     
     /**
      * @notice Update reputation scores for an oracle identity.
-     * After updating the scores, this function checks for conditions to trigger
-     * a lock (preventing unregistration) and, in severe cases, a slash and block.
-     * It also checks if the full history (maxScoreHistory records) shows a monotonic worsening.
      */
     function updateScores(
         address _oracle, 
@@ -234,9 +238,8 @@ contract ReputationKeeper is Ownable {
             info.recentScores.pop();
         }
         
-        // Only apply a new lock/penalty if any previous lock has expired.
+        // Apply penalties if necessary.
         if (block.timestamp >= info.lockedUntil) {
-            // Severe penalty: if either score is below the severe threshold.
             if (info.qualityScore < severeThreshold || info.timelinessScore < severeThreshold) {
                 if (info.stakeAmount >= slashAmountConfig) {
                     info.stakeAmount -= slashAmountConfig;
@@ -247,7 +250,6 @@ contract ReputationKeeper is Ownable {
                 info.blocked = true;
                 emit OracleSlashed(_oracle, _jobId, slashAmountConfig, info.lockedUntil, true);
             }
-            // Mild penalty: if either score is below the mild threshold (but not below severe).
             else if (info.qualityScore < mildThreshold || info.timelinessScore < mildThreshold) {
                 info.lockedUntil = block.timestamp + lockDurationConfig;
                 info.blocked = false;
@@ -255,7 +257,6 @@ contract ReputationKeeper is Ownable {
             }
         }
         
-        // Check for full history monotonic worsening.
         if (info.recentScores.length == maxScoreHistory) {
             bool qualityWorsening = true;
             bool timelinessWorsening = true;
@@ -276,7 +277,6 @@ contract ReputationKeeper is Ownable {
                 info.lockedUntil = block.timestamp + lockDurationConfig;
                 info.blocked = true;
                 emit OracleSlashed(_oracle, _jobId, slashAmountConfig, info.lockedUntil, true);
-                // Clear the history so we don't apply this penalty repeatedly on the same data.
                 delete info.recentScores;
             }
         }
@@ -285,34 +285,22 @@ contract ReputationKeeper is Ownable {
     }
     
     /**
-     * @notice Calculate the weighted selection score for an oracle identity, with fee weighting.
+     * @notice Calculate the weighted selection score for an oracle identity.
      * Oracles that are blocked (and still within the lock period) are treated as having a score of 0.
-     * @param _oracle The oracle address
-     * @param _jobId The job ID
-     * @param alpha The weight parameter for quality vs. timeliness (0-1000)
-     * @param maxFee The maximum fee the user is willing to pay
-     * @param estimatedBaseCost The estimated base cost for processing the request
-     * @param maxFeeBasedScalingFactor The maximum scaling factor for fee weighting
-     * @return The weighted selection score
+     * Now accepts a single SelectionParams struct.
      */
     function getSelectionScore(
         address _oracle,
         bytes32 _jobId,
-        uint256 alpha,
-        uint256 maxFee,
-        uint256 estimatedBaseCost,
-        uint256 maxFeeBasedScalingFactor
+        SelectionParams memory params
     ) public view returns (uint256) {
         bytes32 key = _oracleKey(_oracle, _jobId);
         OracleInfo storage info = oracles[key];
         
-        // If oracle is blocked and still within lock period, return 0
         if (info.isActive && info.blocked && block.timestamp < info.lockedUntil) return 0;
         
-        // Calculate the base weighted score from quality and timeliness
-        int256 weightedScore = (int256(1000 - alpha) * info.qualityScore + int256(alpha) * info.timelinessScore) / 1000;
-        
-        // Apply bounds to the base score
+        int256 weightedScore = (int256(1000 - params.alpha) * info.qualityScore +
+                                 int256(params.alpha) * info.timelinessScore) / 1000;
         if (weightedScore < int256(MIN_SCORE_FOR_SELECTION)) {
             weightedScore = int256(MIN_SCORE_FOR_SELECTION);
         }
@@ -320,45 +308,30 @@ contract ReputationKeeper is Ownable {
             weightedScore = int256(MAX_SCORE_FOR_SELECTION);
         }
         
-        // Get the oracle's fee
         uint256 oracleFee = info.fee;
-        
-        // Calculate fee-weighting factor: max(min((maxFee-estimatedBaseCost)/(oracleFee-estimatedBaseCost), maxFeeBasedScalingFactor), 1)
-        uint256 feeWeightingFactor = 1e18; // default is 1.0 in fixed point (18 decimals)
-        
-        // Only apply fee weighting if oracleFee > estimatedBaseCost to avoid division by zero
-        if (oracleFee > estimatedBaseCost && maxFee > estimatedBaseCost) {
-            // Calculate (maxFee-estimatedBaseCost)/(oracleFee-estimatedBaseCost) with fixed point math
-            uint256 numerator = (maxFee - estimatedBaseCost) * 1e18;
-            uint256 denominator = oracleFee - estimatedBaseCost;
+        uint256 feeWeightingFactor = 1e18;
+        if (oracleFee > params.estimatedBaseCost && params.maxFee > params.estimatedBaseCost) {
+            uint256 numerator = (params.maxFee - params.estimatedBaseCost) * 1e18;
+            uint256 denominator = oracleFee - params.estimatedBaseCost;
             uint256 ratio = numerator / denominator;
-            
-            // Apply min(ratio, maxFeeBasedScalingFactor * 1e18)
-            uint256 maxScaling = maxFeeBasedScalingFactor * 1e18;
+            uint256 maxScaling = params.maxFeeBasedScalingFactor * 1e18;
             if (ratio > maxScaling) {
                 feeWeightingFactor = maxScaling;
             } else if (ratio > 1e18) {
                 feeWeightingFactor = ratio;
             }
-            // Note: if ratio <= 1e18, we keep the default value of 1e18 (representing 1.0)
         }
         
-        // Apply fee weighting to the base score, using fixed point math
         uint256 finalScore = uint256(weightedScore) * feeWeightingFactor / 1e18;
-        
         return finalScore;
     }
     
     /**
-     * @notice Select a list of oracle identities based on their weighted scores, including fee weighting.
-     * Oracles that are currently blocked (and locked) are excluded.
-     * @param count Number of oracles to select
-     * @param alpha Weight parameter for quality vs. timeliness (0-1000)
-     * @param maxFee Maximum fee the user is willing to pay
-     * @param estimatedBaseCost Estimated base cost for processing the request
-     * @param maxFeeBasedScalingFactor Maximum scaling factor for fee weighting
-     * @param requestedClass The class (a 64-bit number) that the caller wants the oracle to support
-     * @return Array of selected oracle identities
+     * @notice Select a list of oracle identities based on their weighted scores.
+     * Uses a two-stage approach:
+     *  1. Filter eligible oracles (active, fee <= maxFee, not blocked, supporting the requested class).
+     *  2. If eligible count > shortlistSize, randomly select a subset of size shortlistSize.
+     *  3. Perform weighted selection on that shortlist.
      */
     function selectOracles(
         uint256 count,
@@ -366,13 +339,13 @@ contract ReputationKeeper is Ownable {
         uint256 maxFee,
         uint256 estimatedBaseCost,
         uint256 maxFeeBasedScalingFactor,
-        uint64 requestedClass   // <-- New parameter for filtering by class
+        uint64 requestedClass
     ) external view returns (OracleIdentity[] memory) {
         require(approvedContracts[msg.sender].isApproved, "Not approved to select oracles");
         require(estimatedBaseCost < maxFee, "Base cost must be less than max fee");
         require(maxFeeBasedScalingFactor >= 1, "Max scaling factor must be at least 1");
         
-        uint256 activeCount = 0;
+        uint256 eligibleCount = 0;
         for (uint256 i = 0; i < registeredOracles.length; i++) {
             OracleIdentity storage id = registeredOracles[i];
             bytes32 key = _oracleKey(id.oracle, id.jobId);
@@ -382,12 +355,12 @@ contract ReputationKeeper is Ownable {
                 (!(oracles[key].blocked && block.timestamp < oracles[key].lockedUntil)) &&
                 _hasClass(id.classes, requestedClass)
             ) {
-                activeCount++;
+                eligibleCount++;
             }
         }
-        require(activeCount > 0, "No active oracles available with fee <= maxFee and requested class");
+        require(eligibleCount > 0, "No active oracles available with fee <= maxFee and requested class");
         
-        OracleIdentity[] memory activeOracles = new OracleIdentity[](activeCount);
+        OracleIdentity[] memory eligibleOracles = new OracleIdentity[](eligibleCount);
         uint256 idx = 0;
         for (uint256 i = 0; i < registeredOracles.length; i++) {
             OracleIdentity storage id = registeredOracles[i];
@@ -398,55 +371,73 @@ contract ReputationKeeper is Ownable {
                 (!(oracles[key].blocked && block.timestamp < oracles[key].lockedUntil)) &&
                 _hasClass(id.classes, requestedClass)
             ) {
-                activeOracles[idx] = id;
+                eligibleOracles[idx] = id;
                 idx++;
             }
         }
         
-        uint256 totalWeight = 0;
-        uint256[] memory weights = new uint256[](activeCount);
-        for (uint256 i = 0; i < activeCount; i++) {
-            weights[i] = getSelectionScore(
-                activeOracles[i].oracle,
-                activeOracles[i].jobId,
-                alpha,
-                maxFee,
-                estimatedBaseCost,
-                maxFeeBasedScalingFactor
-            );
-            totalWeight += weights[i];
+        // Determine the shortlist.
+        OracleIdentity[] memory shortlist;
+        if (eligibleCount > shortlistSize) {
+            shortlist = new OracleIdentity[](shortlistSize);
+            for (uint256 i = 0; i < shortlistSize; i++) {
+                uint256 randIndex = i + (uint256(keccak256(abi.encodePacked(block.timestamp, block.prevrandao, i))) % (eligibleCount - i));
+                OracleIdentity memory temp = eligibleOracles[i];
+                eligibleOracles[i] = eligibleOracles[randIndex];
+                eligibleOracles[randIndex] = temp;
+                shortlist[i] = eligibleOracles[i];
+            }
+        } else {
+            shortlist = eligibleOracles;
         }
         
+        SelectionParams memory params = SelectionParams({
+            alpha: alpha,
+            maxFee: maxFee,
+            estimatedBaseCost: estimatedBaseCost,
+            maxFeeBasedScalingFactor: maxFeeBasedScalingFactor
+        });
+        
+        return _weightedSelect(shortlist, params, count);
+    }
+    
+    /**
+     * @dev Internal helper to perform weighted selection on a given shortlist.
+     */
+    function _weightedSelect(
+        OracleIdentity[] memory shortlist,
+        SelectionParams memory params,
+        uint256 count
+    ) internal view returns (OracleIdentity[] memory) {
+        uint256 shortlistCount = shortlist.length;
+        uint256 totalWeight = 0;
+        uint256[] memory weights = new uint256[](shortlistCount);
+        for (uint256 i = 0; i < shortlistCount; i++) {
+            weights[i] = getSelectionScore(shortlist[i].oracle, shortlist[i].jobId, params);
+            totalWeight += weights[i];
+        }
         OracleIdentity[] memory selectedOracles = new OracleIdentity[](count);
         for (uint256 i = 0; i < count; i++) {
             uint256 seed = uint256(keccak256(abi.encodePacked(block.timestamp, block.prevrandao, i)));
             uint256 selection = seed % totalWeight;
             uint256 sum = 0;
-            for (uint256 j = 0; j < activeCount; j++) {
+            for (uint256 j = 0; j < shortlistCount; j++) {
                 sum += weights[j];
                 if (sum > selection) {
-                    selectedOracles[i] = activeOracles[j];
+                    selectedOracles[i] = shortlist[j];
                     break;
                 }
             }
             if (selectedOracles[i].oracle == address(0)) {
-                selectedOracles[i] = activeOracles[0];
+                selectedOracles[i] = shortlist[0];
             }
         }
-        
         return selectedOracles;
     }
     
-    function approveContract(address contractAddress) external onlyOwner {
-        approvedContracts[contractAddress].isApproved = true;
-        emit ContractApproved(contractAddress);
-    }
-    
-    function removeContract(address contractAddress) external onlyOwner {
-        approvedContracts[contractAddress].isApproved = false;
-        emit ContractRemoved(contractAddress);
-    }
-    
+    /**
+     * @notice Records that a set of oracle identities were used by an approved contract.
+     */
     function recordUsedOracles(OracleIdentity[] calldata _oracleIdentities) external {
         require(approvedContracts[msg.sender].isApproved, "Not approved to record oracles");
         for (uint256 i = 0; i < _oracleIdentities.length; i++) {
@@ -493,8 +484,7 @@ contract ReputationKeeper is Ownable {
     }
 
     /**
-     * @notice Updates the reference to the VerdiktaToken contract
-     * @param _newVerdiktaToken The address of the new VerdiktaToken contract
+     * @notice Updates the reference to the VerdiktaToken contract.
      */
     function setVerdiktaToken(address _newVerdiktaToken) external onlyOwner {
         require(_newVerdiktaToken != address(0), "Invalid token address");
@@ -506,9 +496,9 @@ contract ReputationKeeper is Ownable {
         return registeredOracles.length;
     }
 
-    // ------------------------------------------------------------------------
-    // Internal helper: Check if the given classes array contains the requested class.
-    // ------------------------------------------------------------------------
+    /**
+     * @dev Internal helper: Check if the given classes array contains the requested class.
+     */
     function _hasClass(uint64[] memory classes, uint64 requestedClass) internal pure returns (bool) {
         for (uint256 i = 0; i < classes.length; i++) {
             if (classes[i] == requestedClass) {
@@ -532,6 +522,29 @@ contract ReputationKeeper is Ownable {
         revert("Oracle not found");
     }
 
-
+    /**
+     * @notice Set a new shortlist size for oracle selection.
+     * Only the owner can update this value.
+     */
+    function setShortlistSize(uint256 newSize) external onlyOwner {
+        require(newSize > 0, "Shortlist size must be > 0");
+        shortlistSize = newSize;
+    }
+    
+    /**
+     * @notice Approve a contract to use oracles.
+     */
+    function approveContract(address contractAddress) external onlyOwner {
+        approvedContracts[contractAddress].isApproved = true;
+        emit ContractApproved(contractAddress);
+    }
+    
+    /**
+     * @notice Remove a contract's approval.
+     */
+    function removeContract(address contractAddress) external onlyOwner {
+        approvedContracts[contractAddress].isApproved = false;
+        emit ContractRemoved(contractAddress);
+    }
 }
- 
+
