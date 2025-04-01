@@ -26,7 +26,7 @@ module.exports = async function(callback) {
     // Configure aggregator
     console.log('Configuring aggregator...');
     await aggregator.setConfig(4, 3, 2, 300);
-    await aggregator.setMaxFee(web3.utils.toWei('0.08', 'ether'));
+    await aggregator.setMaxOracleFee(web3.utils.toWei('0.08', 'ether'));
     console.log('Aggregator configured');
     
     // Approve aggregator to use keeper
