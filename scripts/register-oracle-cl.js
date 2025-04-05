@@ -8,10 +8,16 @@
 //   --link 0xLinkTokenAddress \
 //   --oracle 0xOracleAddress \
 //   --wrappedverdikta 0xWrappedVerdiktaTokenAddress \
-//   --jobids "jobid1" "jobid2" --network your_network
-//   (Shortcuts, like -l instead of --link also works)
-//   Here is an example registering two jobIDs:
-//   truffle exec scripts/register-oracle-cl.js -a 0x69b601fC8263E9c55674E5973837062706608DF3 -l 0xE4aB69C077896252FAFBD49EFD26B5D171A32410 -w 0x6bF578606493b03026473F838bCD3e3b5bBa5515 -o 0xD67D6508D4E5611cd6a463Dd0969Fa153Be91101 --jobids "38f19572c51041baa5f2dea284614590" "39515f75ac2947beb7f2eeae4d8eaf3e" --network base_sepolia
+//   --jobids "jobid1" "jobid2" \
+//   --classes class1 class2 --network your_network
+//
+// Example registering two jobIDs each with two classes:
+// truffle exec scripts/register-oracle-cl.js -a 0x59067815e006e245449E1A24a1091dF176b3CF09 \
+//   -l 0xE4aB69C077896252FAFBD49EFD26B5D171A32410 \
+//   -w 0x6bF578606493b03026473F838bCD3e3b5bBa5515 \
+//   -o 0xD67D6508D4E5611cd6a463Dd0969Fa153Be91101 \
+//   --jobids "38f19572c51041baa5f2dea284614590" "39515f75ac2947beb7f2eeae4d8eaf3e" \
+//   --classes 128 129 --network base_sepolia
 
 const yargs = require('yargs/yargs');
 const { hideBin } = require('yargs/helpers');
@@ -45,13 +51,14 @@ const AggregatorABI = [
   }
 ];
 
-// ReputationKeeper: minimal functions for registration and info query.
+// ReputationKeeper: updated to include an array parameter for classes and correct outputs.
 const ReputationKeeperABI = [
   {
     "inputs": [
       { "internalType": "address", "name": "_oracle", "type": "address" },
       { "internalType": "bytes32", "name": "_jobId", "type": "bytes32" },
-      { "internalType": "uint256", "name": "fee", "type": "uint256" }
+      { "internalType": "uint256", "name": "fee", "type": "uint256" },
+      { "internalType": "uint64[]", "name": "_classes", "type": "uint64[]" }
     ],
     "name": "registerOracle",
     "outputs": [],
@@ -68,8 +75,12 @@ const ReputationKeeperABI = [
       { "internalType": "bool", "name": "isActive", "type": "bool" },
       { "internalType": "int256", "name": "qualityScore", "type": "int256" },
       { "internalType": "int256", "name": "timelinessScore", "type": "int256" },
+      { "internalType": "uint256", "name": "callCount", "type": "uint256" },
       { "internalType": "bytes32", "name": "jobId", "type": "bytes32" },
-      { "internalType": "uint256", "name": "fee", "type": "uint256" }
+      { "internalType": "uint256", "name": "fee", "type": "uint256" },
+      { "internalType": "uint256", "name": "stakeAmount", "type": "uint256" },
+      { "internalType": "uint256", "name": "lockedUntil", "type": "uint256" },
+      { "internalType": "bool", "name": "blocked", "type": "bool" }
     ],
     "stateMutability": "view",
     "type": "function"
@@ -186,6 +197,12 @@ module.exports = async function(callback) {
         type: 'array',
         description: 'Job ID strings (as an array)'
       })
+      .option('classes', {
+        alias: 'c',
+        type: 'array',
+        description: 'Array of class values (e.g. --classes 128 129)',
+        demandOption: true
+      })
       .demandOption('jobids', 'You must provide at least one job id')
       .help()
       .argv;
@@ -194,6 +211,9 @@ module.exports = async function(callback) {
       console.error('Error: aggregator, link, oracle, wrappedverdikta addresses and jobids must be specified.');
       return callback();
     }
+
+    // Convert classes to numbers (if not already)
+    const classes = argv.classes.map(x => Number(x));
 
     // Get the sender account
     const accounts = await web3.eth.getAccounts();
@@ -226,7 +246,7 @@ module.exports = async function(callback) {
     console.log('Job IDs:', jobIdStrings);
 
     const linkFee = "50000000000000000"; // 0.05 LINK (18 decimals)
-    const wvdkaStake = "100000000000000000000"; // 100 wVDKA (18 decimals)
+    const vdkaStake = "100000000000000000000"; // 100 wVDKA (18 decimals)
 
     // Loop over each jobID and register it if not already active
     for (let i = 0; i < jobIdStrings.length; i++) {
@@ -241,12 +261,16 @@ module.exports = async function(callback) {
         isActive: oracleInfo.isActive,
         qualityScore: oracleInfo.qualityScore,
         timelinessScore: oracleInfo.timelinessScore,
+        callCount: oracleInfo.callCount,
         jobId: web3.utils.hexToAscii(oracleInfo.jobId),
-        fee: oracleInfo.fee
+        fee: oracleInfo.fee,
+        stakeAmount: oracleInfo.stakeAmount,
+        lockedUntil: oracleInfo.lockedUntil,
+        blocked: oracleInfo.blocked
       });
 
       if (oracleInfo.isActive) {
-          console.log(`Oracle for jobID ${currentJobIdString} is already registered. Proceeding with LINK approval...`);
+        console.log(`Oracle for jobID ${currentJobIdString} is already registered. Proceeding with LINK approval...`);
       } else {
         // Log addresses for verification
         console.log('Using contracts:');
@@ -256,8 +280,8 @@ module.exports = async function(callback) {
         // Check wVDKA balance
         const balance = await wrappedVerdikta.methods.balanceOf(owner).call();
         console.log('wVDKA Balance:', balance.toString());
-        if (web3.utils.toBN(balance).lt(web3.utils.toBN(wvdkaStake))) {
-           throw new Error('Insufficient wVDKA balance for staking');
+        if (web3.utils.toBN(balance).lt(web3.utils.toBN(vdkaStake))) {
+          throw new Error('Insufficient wVDKA balance for staking');
         }
 
         // Check current allowance
@@ -266,30 +290,30 @@ module.exports = async function(callback) {
 
         // Approve keeper to spend wVDKA
         console.log('Approving keeper to spend wVDKA...');
-        await wrappedVerdikta.methods.approve(keeper.options.address, wvdkaStake).send({ from: owner });
+        await wrappedVerdikta.methods.approve(keeper.options.address, vdkaStake).send({ from: owner });
         console.log('wVDKA spend approved');
 
-        // Register oracle with the current jobID
-        console.log(`Registering oracle for jobID ${currentJobIdString}...`);
-        await keeper.methods.registerOracle(oracleAddress, jobId, linkFee).send({ from: owner });
+        // Register oracle with the current jobID and pass the classes parameter from the command line.
+        console.log(`Registering oracle for jobID ${currentJobIdString} with classes ${JSON.stringify(classes)}...`);
+        await keeper.methods.registerOracle(oracleAddress, jobId, linkFee, classes).send({ from: owner });
         console.log(`Oracle registered successfully for jobID ${currentJobIdString}`);
       }
     }
 
-    // Set up LINK approval for the aggregator
+    // Set up LINK token approval for the aggregator
     console.log('\nSetting up LINK token approval...');
     // Get aggregator configuration from aggregator contract
     const config = await aggregator.methods.getContractConfig().call();
     console.log('Aggregator config:', {
-        oracleAddr: config.oracleAddr,
-        linkAddr: config.linkAddr,
-        jobId: web3.utils.hexToAscii(config.jobId),
-        fee: config.fee
+      oracleAddr: config.oracleAddr,
+      linkAddr: config.linkAddr,
+      jobId: web3.utils.hexToAscii(config.jobId),
+      fee: config.fee
     });
 
     // Check if the aggregator's configured oracle address matches the provided oracle address
     if (config.oracleAddr.toLowerCase() !== oracleAddress.toLowerCase()) {
-        console.warn('Warning: Aggregator oracle address does not match registered oracle');
+      console.warn('Warning: Aggregator oracle address does not match registered oracle');
     }
 
     // Check LINK balance and approval for aggregator
@@ -300,28 +324,16 @@ module.exports = async function(callback) {
     const linkBalance = await linkToken.methods.balanceOf(owner).call();
     const currentLinkAllowance = await linkToken.methods.allowance(owner, argv.aggregator).call();
     console.log('LINK status:', {
-        balance: linkBalance.toString(),
-        currentAllowance: currentLinkAllowance.toString()
+      balance: linkBalance.toString(),
+      currentAllowance: currentLinkAllowance.toString()
     });
     
-    // Approve a large amount of LINK (max uint256)
-    // const maxLinkApproval = "115792089237316195423570985008687907853269984665640564039457584007913129639935";
-    // console.log('Approving LINK token spending...');
-
-    // Approve for oracle
-    // await linkToken.methods.approve(oracleAddress, maxLinkApproval).send({ from: owner });
-    // console.log('LINK spending approved for oracle');
-    
-    // Approve for aggregator
-    // await linkToken.methods.approve(argv.aggregator, maxLinkApproval).send({ from: owner });
-    // console.log('LINK spending approved for aggregator');
-
     // Verify allowances
     const newOracleAllowance = await linkToken.methods.allowance(owner, oracleAddress).call();
     const newAggregatorAllowance = await linkToken.methods.allowance(owner, argv.aggregator).call();
     console.log('Allowances:', {
-        oracleAllowance: newOracleAllowance.toString(),
-        aggregatorAllowance: newAggregatorAllowance.toString()
+      oracleAllowance: newOracleAllowance.toString(),
+      aggregatorAllowance: newAggregatorAllowance.toString()
     });
 
     console.log('Setup completed successfully');

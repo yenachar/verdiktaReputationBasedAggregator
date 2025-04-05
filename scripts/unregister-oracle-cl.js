@@ -10,8 +10,13 @@
 //   --wrappedverdikta 0xWrappedVerdiktaTokenAddress \
 //   --jobids "38f19572c51041baa5f2dea284614590" "39515f75ac2947beb7f2eeae4d8eaf3e" \
 //   --network your_network
+//
 // Example:
-// truffle exec scripts/unregister-oracle-cl.js -a 0x69b601fC8263E9c55674E5973837062706608DF3 -w 0x6bF578606493b03026473F838bCD3e3b5bBa5515 -o 0xD67D6508D4E5611cd6a463Dd0969Fa153Be91101 --jobids "38f19572c51041baa5f2dea284614590" "39515f75ac2947beb7f2eeae4d8eaf3e" --network base_sepolia
+// truffle exec scripts/unregister-oracle-cl.js -a 0x59067815e006e245449E1A24a1091dF176b3CF09 \
+//   -w 0x6bF578606493b03026473F838bCD3e3b5bBa5515 \
+//   -o 0xD67D6508D4E5611cd6a463Dd0969Fa153Be91101 \
+//   --jobids "38f19572c51041baa5f2dea284614590" "39515f75ac2947beb7f2eeae4d8eaf3e" \
+//   --network base_sepolia
 
 const yargs = require('yargs/yargs');
 const { hideBin } = require('yargs/helpers');
@@ -45,7 +50,7 @@ const AggregatorABI = [
   }
 ];
 
-// ReputationKeeper: minimal functions for deregistration and info query.
+// ReputationKeeper: updated minimal functions for deregistration and info query.
 const ReputationKeeperABI = [
   {
     "inputs": [
@@ -67,8 +72,12 @@ const ReputationKeeperABI = [
       { "internalType": "bool", "name": "isActive", "type": "bool" },
       { "internalType": "int256", "name": "qualityScore", "type": "int256" },
       { "internalType": "int256", "name": "timelinessScore", "type": "int256" },
+      { "internalType": "uint256", "name": "callCount", "type": "uint256" },
       { "internalType": "bytes32", "name": "jobId", "type": "bytes32" },
-      { "internalType": "uint256", "name": "fee", "type": "uint256" }
+      { "internalType": "uint256", "name": "fee", "type": "uint256" },
+      { "internalType": "uint256", "name": "stakeAmount", "type": "uint256" },
+      { "internalType": "uint256", "name": "lockedUntil", "type": "uint256" },
+      { "internalType": "bool", "name": "blocked", "type": "bool" }
     ],
     "stateMutability": "view",
     "type": "function"
@@ -197,8 +206,12 @@ module.exports = async function(callback) {
         isActive: oracleInfo.isActive,
         qualityScore: oracleInfo.qualityScore,
         timelinessScore: oracleInfo.timelinessScore,
+        callCount: oracleInfo.callCount,
         jobId: web3.utils.hexToAscii(oracleInfo.jobId),
-        fee: oracleInfo.fee
+        fee: oracleInfo.fee,
+        stakeAmount: oracleInfo.stakeAmount,
+        lockedUntil: oracleInfo.lockedUntil,
+        blocked: oracleInfo.blocked
       });
 
       if (!oracleInfo.isActive) {
