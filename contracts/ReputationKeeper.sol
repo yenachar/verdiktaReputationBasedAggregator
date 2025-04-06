@@ -32,14 +32,14 @@ contract ReputationKeeper is Ownable {
         int256 qualityScore;    // Score based on clustering accuracy
         int256 timelinessScore; // Score based on response timeliness
         uint256 stakeAmount;    // Amount of VDKA tokens staked
-        bool isActive;          // Whether oracle is currently active
+        bool isActive;          // Indicates if the oracle is available (true) or temporarily paused (false)
         bytes32 jobId;          // The job ID (redundant but stored for convenience)
         uint256 fee;            // LINK fee required for this job
         uint256 callCount;      // Number of times this oracle has been called
         ScoreRecord[] recentScores; // Rolling history of scores
         uint256 lockedUntil;    // Timestamp until which the oracle is locked (cannot be unregistered)
         bool blocked;           // If true, oracle is blocked from selection
-        uint64[] classes;       // classes for this oracle
+        uint64[] classes;       // Classes for this oracle
     }
     
     // Per–contract usage data.
@@ -89,6 +89,8 @@ contract ReputationKeeper is Ownable {
     event OracleSlashed(address indexed oracle, bytes32 jobId, uint256 slashAmount, uint256 lockedUntil, bool blocked);
     event ContractApproved(address indexed contractAddress);
     event ContractRemoved(address indexed contractAddress);
+    // Optional event for pausing/unpausing an oracle.
+    event OracleActiveStatusUpdated(address indexed oracle, bytes32 jobId, bool isActive);
     
     /// @dev Generates a composite key from an oracle address and its job ID.
     function _oracleKey(address _oracle, bytes32 _jobId) internal pure returns (bytes32) {
@@ -109,7 +111,8 @@ contract ReputationKeeper is Ownable {
         uint64[] memory _classes
     ) external {
         bytes32 key = _oracleKey(_oracle, _jobId);
-        require(!oracles[key].isActive, "Oracle already registered");
+        // Ensure the oracle is not already registered.
+        require(oracles[key].stakeAmount == 0, "Oracle already registered");
         require(fee > 0, "Fee must be greater than 0");
         require(_classes.length > 0, "At least one class must be provided");
         require(_classes.length <= 5, "A maximum of 5 classes allowed");
@@ -127,7 +130,7 @@ contract ReputationKeeper is Ownable {
         info.qualityScore = 0;
         info.timelinessScore = 0;
         info.stakeAmount = STAKE_REQUIREMENT;
-        info.isActive = true;
+        info.isActive = true; // Available by default
         info.jobId = _jobId;
         info.fee = fee;
         info.callCount = 0;
@@ -156,11 +159,13 @@ contract ReputationKeeper is Ownable {
     
     /**
      * @notice Deregister an oracle identity.
+     * Completely removes the oracle record from storage.
      */
     function deregisterOracle(address _oracle, bytes32 _jobId) external {
         bytes32 key = _oracleKey(_oracle, _jobId);
         OracleInfo storage info = oracles[key];
-        require(info.isActive, "Oracle not registered");
+        // Check that the oracle is registered by ensuring stakeAmount is nonzero.
+        require(info.stakeAmount > 0, "Oracle not registered");
         require(
             msg.sender == owner() || msg.sender == IOracleOwner(_oracle).owner(),
             "Not authorized to deregister oracle"
@@ -170,10 +175,32 @@ contract ReputationKeeper is Ownable {
         // Return the staked tokens.
         verdiktaToken.transfer(msg.sender, info.stakeAmount);
         
-        info.stakeAmount = 0;
-        info.isActive = false;
+        // Remove the oracle record completely.
+        delete oracles[key];
+        
+        // Remove the oracle identity from the registeredOracles array using swap and pop.
+        for (uint256 i = 0; i < registeredOracles.length; i++) {
+            if (registeredOracles[i].oracle == _oracle && registeredOracles[i].jobId == _jobId) {
+                registeredOracles[i] = registeredOracles[registeredOracles.length - 1];
+                registeredOracles.pop();
+                break;
+            }
+        }
         
         emit OracleDeregistered(_oracle, _jobId);
+    }
+    
+    /**
+     * @notice Set an oracle's active status (pause/unpause).
+     * Only the contract owner can perform this action.
+     * When paused, isActive is set to false; when unpaused, it is set to true.
+     */
+    function setOracleActive(address _oracle, bytes32 _jobId, bool _active) external onlyOwner {
+        bytes32 key = _oracleKey(_oracle, _jobId);
+        OracleInfo storage info = oracles[key];
+        require(info.stakeAmount > 0, "Oracle not registered");
+        info.isActive = _active;
+        emit OracleActiveStatusUpdated(_oracle, _jobId, _active);
     }
     
     /**
@@ -297,7 +324,9 @@ contract ReputationKeeper is Ownable {
         bytes32 key = _oracleKey(_oracle, _jobId);
         OracleInfo storage info = oracles[key];
         
-        if (info.isActive && info.blocked && block.timestamp < info.lockedUntil) return 0;
+        // If the oracle is paused (isActive false), it won't be selected.
+        if (!info.isActive) return 0;
+        if (info.blocked && block.timestamp < info.lockedUntil) return 0;
         
         int256 weightedScore = (int256(1000 - params.alpha) * info.qualityScore +
                                  int256(params.alpha) * info.timelinessScore) / 1000;
