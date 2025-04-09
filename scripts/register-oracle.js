@@ -21,7 +21,9 @@ module.exports = async function(callback) {
     // Define oracle details.
     const jobIdStrings = [
       "38f19572c51041baa5f2dea284614590",
-      "39515f75ac2947beb7f2eeae4d8eaf3e"
+      "39515f75ac2947beb7f2eeae4d8eaf3e",
+      "cdee0a127bc74a5188cbabf7aadcc84f"
+
     ];
     const linkFee = "50000000000000000"; // 0.05 LINK (18 decimals)
     const vdkaStake = "100000000000000000000"; // 100 wVDKA (18 decimals)

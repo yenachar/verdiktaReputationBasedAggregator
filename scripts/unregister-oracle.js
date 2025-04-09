@@ -60,7 +60,8 @@ module.exports = async function(callback) {
     // Define the list of job ID strings to deregister.
     const jobIdStrings = [
       "38f19572c51041baa5f2dea284614590",
-      "39515f75ac2947beb7f2eeae4d8eaf3e"
+      "39515f75ac2947beb7f2eeae4d8eaf3e",
+      "494db95af2944227b5b0c68453b8ad07"
       // Add additional jobId strings as needed.
     ];
 
