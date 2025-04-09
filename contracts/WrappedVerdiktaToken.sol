@@ -188,18 +188,16 @@ contract WrappedVerdiktaToken is ERC20Permit, Ownable, ERC165, IOptimismMintable
      * Called by the L2 Standard Bridge to finalize an ERC20 deposit.
      * @param _l1Token Address of the L1 token.
      * @param _l2Token Address of the L2 token (should equal this contract's address).
-     * @param _from Address initiating the deposit.
      * @param _to Address to receive the minted tokens.
      * @param _amount Amount of tokens deposited.
-     * @param _extraData Extra data for the deposit.
      */
     function finalizeDepositERC20(
         address _l1Token,
         address _l2Token,
-        address _from,
+        address /* _from */,
         address _to,
         uint256 _amount,
-        bytes calldata _extraData
+        bytes calldata /* _extraData */
     ) external payable {
         require(msg.sender == L2_STANDARD_BRIDGE, "Caller is not the L2 Standard Bridge");
         require(_l2Token == address(this), "L2 token address mismatch");
