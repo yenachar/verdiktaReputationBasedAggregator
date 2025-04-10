@@ -6,8 +6,11 @@ const fetch = require("node-fetch");
 module.exports = {
   networks: {
     development: {
-      host: "127.0.0.1",
-      port: 8545,
+      provider: () =>
+        new HDWalletProvider(
+          process.env.PRIVATE_KEY, // Rich account's private key
+          "http://127.0.0.1:8545"  // Ganache fork URL
+        ),
       network_id: "*",
     },
 
