@@ -1,6 +1,14 @@
+
 const ReputationAggregator = artifacts.require("ReputationAggregator");
 
 module.exports = async function(deployer, network) {
+
+  // Skip if flag is set for testing
+  if (process.env.SKIP_MIGRATIONS) {
+    console.log("Skipping migrations in 4_ because SKIP_MIGRATIONS is set.");
+    return;
+  }
+
   // Define LINK token addresses per network.
   const LINK_TOKEN_ADDRESS = {
     base: '0xd886e2286fd1073df82462ea1822119600af80b6',

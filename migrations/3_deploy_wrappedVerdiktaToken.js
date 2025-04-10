@@ -1,3 +1,4 @@
+
 const WrappedVerdiktaToken = artifacts.require("WrappedVerdiktaToken");
 const fs = require('fs');
 const path = require('path');
@@ -8,6 +9,19 @@ const L1_BRIDGE_ADDRESS = "0xfd0Bf71F60660E2f608ed56e1659C450eB113120"; // Sepol
 const L2_BRIDGE_ADDRESS = "0x4200000000000000000000000000000000000010"; // Base Sepolia
 
 module.exports = async function(deployer, network, accounts) {
+
+  // Skip if flag is set for testing
+  if (process.env.SKIP_MIGRATIONS) {
+    console.log("Skipping migrations in 3_ because SKIP_MIGRATIONS is set.");
+    return;
+  }
+
+  // Require explicit flag be set for ERC20 Token migration
+  if (!process.env.MIGRATE_ERC20) {
+    console.log("MIGRATE_ERC20 flag not set to '1'. Skipping ERC20 contract migration.");
+    return;
+  }
+
   console.log(`\n----- Deploying WrappedVerdiktaToken to ${network} network -----`);
   console.log(`Deployer account: ${accounts[0]}`);
   

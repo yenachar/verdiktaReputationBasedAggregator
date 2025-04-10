@@ -1,8 +1,16 @@
+
 const WrappedVerdiktaToken = artifacts.require("WrappedVerdiktaToken");
 const ReputationKeeper = artifacts.require("ReputationKeeper");
 const ReputationAggregator = artifacts.require("ReputationAggregator");
 
 module.exports = async function(deployer, network) {
+
+  // Skip if flag is set for testing
+  if (process.env.SKIP_MIGRATIONS) {
+    console.log("Skipping migrations in 5_ because SKIP_MIGRATIONS is set.");
+    return;
+  }
+
   try {
     // Get the already deployed WrappedVerdiktaToken and ReputationAggregator
     const wrappedVerdiktaToken = await WrappedVerdiktaToken.deployed();
