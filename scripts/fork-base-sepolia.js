@@ -21,7 +21,8 @@ const FORK_URL = `https://base-sepolia.infura.io/v3/${INFURA_API_KEY}`;
 // --networkId sets the network id for your fork (optional, here set to 8453 which is Base Sepolia's network id).
 const ganacheArgs = [
   '--fork', FORK_URL,
-  '--networkId', '8453'
+  '--networkId', '84532',
+  '--chain.chainId','84532'
 ];
 
 // Log the command for clarity.
