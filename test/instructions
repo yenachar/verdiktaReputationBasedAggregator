@@ -1,0 +1,9 @@
+
+To set up Ganache, if not already done:
+npm install -g ganache-cli
+
+Then, run a fork in Ganache in a separate terminal window using the customized script:
+./scripts/fork-base-sepolia.js
+
+Then, run the test scripts:
+./test.sh
