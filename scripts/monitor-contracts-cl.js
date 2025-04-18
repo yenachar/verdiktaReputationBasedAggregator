@@ -1,9 +1,9 @@
-// scripts/monitor-contracts-cli.js
+// scripts/monitor-contracts-cl.js
 // Monitors contract deployments and status using user‐supplied contract addresses.
 // The ReputationKeeper address is extracted from the ReputationAggregator contract.
 //
 // Usage example:
-// truffle exec scripts/monitor-contracts-cli.js \
+// truffle exec scripts/monitor-contracts-cl.js \
 //   --wrappedverdikta 0xYourTokenAddress \
 //   --aggregator 0xYourReputationAggregatorAddress \
 //   --network your_network
