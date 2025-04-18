@@ -1,4 +1,4 @@
-// scripts/register-oracle-base.js
+// scripts/register-oracle.js
 // Registers jobs with an oracle on Base Sepolia using the wrapped token
 const WrappedVerdiktaToken = artifacts.require("WrappedVerdiktaToken");
 const ReputationKeeper = artifacts.require("ReputationKeeper");
