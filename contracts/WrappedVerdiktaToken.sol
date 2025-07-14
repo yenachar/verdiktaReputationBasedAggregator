@@ -2,7 +2,6 @@
 pragma solidity ^0.8.21;
 
 import "@openzeppelin/contracts/token/ERC20/extensions/ERC20Permit.sol";
-import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/introspection/ERC165.sol";
 
 /**
@@ -11,19 +10,6 @@ import "@openzeppelin/contracts/utils/introspection/ERC165.sol";
  */
 interface ICrossDomainMessenger {
     function xDomainMessageSender() external view returns (address);
-}
-
-/**
- * @title IStandardBridge
- * @notice Interface for the Base Standard Bridge.
- */
-interface IStandardBridge {
-    function withdraw(
-        address _l2Token,
-        uint256 _amount,
-        uint32 _minGasLimit,
-        bytes calldata _extraData
-    ) external payable;
 }
 
 /**
@@ -52,10 +38,9 @@ interface ILegacyMintableERC20 {
  * @notice Wrapped version of VerdiktaToken for Base, compatible with Base Standard Bridge.
  * Implements IOptimismMintableERC20 and ILegacyMintableERC20.
  */
-contract WrappedVerdiktaToken is ERC20Permit, Ownable, ERC165, IOptimismMintableERC20, ILegacyMintableERC20 {
+contract WrappedVerdiktaToken is ERC20Permit, ERC165, IOptimismMintableERC20, ILegacyMintableERC20 {
     address public immutable l1_Token;
     address public immutable l1Bridge;
-    address public immutable l2Bridge;
 
     // Base’s L2CrossDomainMessenger address.
     address public constant L2_CROSS_DOMAIN_MESSENGER =
@@ -83,24 +68,19 @@ contract WrappedVerdiktaToken is ERC20Permit, Ownable, ERC165, IOptimismMintable
      * @notice Constructor for WrappedVerdiktaToken.
      * @param _l1Token Address of the VerdiktaToken.
      * @param _l1Bridge Address of the L1 Standard Bridge.
-     * @param _l2Bridge Address of the L2 Standard Bridge (must equal L2_STANDARD_BRIDGE).
      */
     constructor(
         address _l1Token,
-        address _l1Bridge,
-        address _l2Bridge
+        address _l1Bridge
     )
         ERC20("Wrapped Verdikta", "wVDKA")
         ERC20Permit("Wrapped Verdikta")
-        Ownable(msg.sender)
     {
         require(_l1Token != address(0), "Invalid L1 token address");
         require(_l1Bridge != address(0), "Invalid L1 bridge address");
-        require(_l2Bridge == L2_STANDARD_BRIDGE, "Invalid L2 bridge address");
 
         l1_Token = _l1Token;
         l1Bridge = _l1Bridge;
-        l2Bridge = _l2Bridge;
     }
 
     /**
@@ -149,26 +129,6 @@ contract WrappedVerdiktaToken is ERC20Permit, Ownable, ERC165, IOptimismMintable
         onlyBridge
     {
         _mint(to, amount);
-    }
-
-    /**
-     * @notice Burn tokens to withdraw them back to L1.
-     * @param amount Amount of tokens to withdraw.
-     * @param minGasLimit Minimum gas limit for the L1 execution.
-     * @param extraData Additional data for the withdrawal.
-     */
-    function withdraw(
-        uint256 amount,
-        uint32 minGasLimit,
-        bytes calldata extraData
-    ) external payable {
-        _burn(msg.sender, amount);
-        IStandardBridge(l2Bridge).withdraw{value: msg.value}(
-            address(this),
-            amount,
-            minGasLimit,
-            extraData
-        );
     }
 
     /**

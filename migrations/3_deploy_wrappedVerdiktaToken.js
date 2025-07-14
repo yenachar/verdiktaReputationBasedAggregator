@@ -4,9 +4,20 @@ const fs = require('fs');
 const path = require('path');
 
 // Base Standard Bridge addresses
-// const L1_BRIDGE_ADDRESS = "0x8E5E40f8f9103168C7d7CF361C6C0fcBCB8b9b2b"; // Sepolia to Base Sepolia
-const L1_BRIDGE_ADDRESS = "0xfd0Bf71F60660E2f608ed56e1659C450eB113120"; // Sepolia Standard Bridge
-const L2_BRIDGE_ADDRESS = "0x4200000000000000000000000000000000000010"; // Base Sepolia
+// const L1_BRIDGE_ADDRESS = "0xfd0Bf71F60660E2f608ed56e1659C450eB113120"; // Sepolia Standard Bridge
+// const L2_BRIDGE_ADDRESS = "0x4200000000000000000000000000000000000010"; // Base Sepolia
+
+// Which L1 goes with which L2?
+//   base_sepolia -> sepolia
+//   base         -> mainnet
+const PARTNER_L1_OF = { base_sepolia: "sepolia", base: "mainnet" };
+
+// L1,L2 Standard Bridge proxies 
+const L1_BRIDGE = {
+  sepolia:  "0xfd0Bf71F60660E2f608ed56e1659C450eB113120",          // Sepolia
+  mainnet:  "0x3154Cf16ccdb4C6d922629664174b904d80F2C35"           // Ethereum Mainnet
+};
+const L2_BRIDGE_ADDRESS = "0x4200000000000000000000000000000000000010"; // identical on every OP-Stack L2
 
 module.exports = async function(deployer, network, accounts) {
 
@@ -26,14 +37,26 @@ module.exports = async function(deployer, network, accounts) {
   console.log(`Deployer account: ${accounts[0]}`);
   
   // Get the L1 token address from deployment file
+  // let L1_TOKEN_ADDRESS;
+  // Determine which L1 we’re paired with (sepolia or mainnet)
+  // const l1Net = PARTNER_L1_OF[network];
+  const cleanName = network.replace(/-fork$/, "");   
+  const l1Net = PARTNER_L1_OF[cleanName];
+
+  if (!l1Net) throw new Error(`Unknown partner for ${network}`);
+  const L1_BRIDGE_ADDRESS = L1_BRIDGE[l1Net];
+
+  // Fetch the canonical token address for that L1
   let L1_TOKEN_ADDRESS;
   const deploymentPath = path.join(__dirname, '../deployment-addresses.json');
   
   if (fs.existsSync(deploymentPath)) {
     const deploymentAddresses = JSON.parse(fs.readFileSync(deploymentPath));
     // Use sepolia network's address since that's where the L1 token is
-    if (deploymentAddresses['sepolia'] && deploymentAddresses['sepolia'].verdiktaTokenAddress) {
-      L1_TOKEN_ADDRESS = deploymentAddresses['sepolia'].verdiktaTokenAddress;
+    // if (deploymentAddresses['sepolia'] && deploymentAddresses['sepolia'].verdiktaTokenAddress) {
+    //  L1_TOKEN_ADDRESS = deploymentAddresses['sepolia'].verdiktaTokenAddress;
+    if (deploymentAddresses[l1Net]?.verdiktaTokenAddress) {
+      L1_TOKEN_ADDRESS = deploymentAddresses[l1Net].verdiktaTokenAddress;
     }
   }
   
@@ -51,8 +74,7 @@ module.exports = async function(deployer, network, accounts) {
   await deployer.deploy(
     WrappedVerdiktaToken,
     L1_TOKEN_ADDRESS,
-    L1_BRIDGE_ADDRESS,
-    L2_BRIDGE_ADDRESS
+    L1_BRIDGE_ADDRESS
   );
   const wrappedToken = await WrappedVerdiktaToken.deployed();
   
@@ -67,10 +89,10 @@ module.exports = async function(deployer, network, accounts) {
     deploymentAddresses = JSON.parse(fs.readFileSync(deploymentPath));
   }
   
-  if (!deploymentAddresses[network]) {
-    deploymentAddresses[network] = {};
+  if (!deploymentAddresses[cleanName]) {
+    deploymentAddresses[cleanName] = {};
   }
-  deploymentAddresses[network].wrappedVerdiktaTokenAddress = wrappedToken.address;
+  deploymentAddresses[cleanName].wrappedVerdiktaTokenAddress = wrappedToken.address;
   
   fs.writeFileSync(deploymentPath, JSON.stringify(deploymentAddresses, null, 2));
   
