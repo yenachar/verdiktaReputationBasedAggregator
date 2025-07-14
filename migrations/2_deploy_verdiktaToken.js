@@ -21,6 +21,7 @@ module.exports = async function(deployer, network) {
   const verdiktaToken = await VerdiktaToken.deployed();
   console.log("VerdiktaToken deployed at:", verdiktaToken.address);
   console.log(`On network: ${network}`);
+  const cleanName = network.replace(/-fork$/, "");
   
   // Save the address to a JSON file
   const deploymentPath = path.join(__dirname, '../deployment-addresses.json');
@@ -33,10 +34,10 @@ module.exports = async function(deployer, network) {
   }
   
   // Update with new address
-  if (!deploymentAddresses[network]) {
-    deploymentAddresses[network] = {};
+  if (!deploymentAddresses[cleanName]) {
+    deploymentAddresses[cleanName] = {};
   }
-  deploymentAddresses[network].verdiktaTokenAddress = verdiktaToken.address;
+  deploymentAddresses[cleanName].verdiktaTokenAddress = verdiktaToken.address;
   
   // Write back to file
   fs.writeFileSync(deploymentPath, JSON.stringify(deploymentAddresses, null, 2));
