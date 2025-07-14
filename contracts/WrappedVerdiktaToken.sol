@@ -49,7 +49,7 @@ interface ILegacyMintableERC20 {
 
 /**
  * @title WrappedVerdiktaToken
- * @notice Wrapped version of VerdiktaToken for Base Sepolia, compatible with Base Standard Bridge.
+ * @notice Wrapped version of VerdiktaToken for Base, compatible with Base Standard Bridge.
  * Implements IOptimismMintableERC20 and ILegacyMintableERC20.
  */
 contract WrappedVerdiktaToken is ERC20Permit, Ownable, ERC165, IOptimismMintableERC20, ILegacyMintableERC20 {
@@ -61,25 +61,27 @@ contract WrappedVerdiktaToken is ERC20Permit, Ownable, ERC165, IOptimismMintable
     address public constant L2_CROSS_DOMAIN_MESSENGER =
         0x4200000000000000000000000000000000000007;
 
-    // Base Sepolia L2 Standard Bridge address.
+    // Base L2 Standard Bridge address.
     address public constant L2_STANDARD_BRIDGE =
         0x4200000000000000000000000000000000000010;
 
     /**
      * @dev Modifier to restrict access to the L2 bridge.
-     * Allows either a direct call from the L2 Standard Bridge or from the messenger.
+     * Allows either a direct call from the L2 Standard Bridge or conditional from the messenger.
      */
     modifier onlyBridge() {
         require(
-            msg.sender == L2_STANDARD_BRIDGE || msg.sender == L2_CROSS_DOMAIN_MESSENGER,
-            "Caller is not L2StandardBridge or messenger"
+            msg.sender == L2_STANDARD_BRIDGE || 
+            (msg.sender == L2_CROSS_DOMAIN_MESSENGER && 
+             ICrossDomainMessenger(L2_CROSS_DOMAIN_MESSENGER).xDomainMessageSender() == l1Bridge),
+            "Caller is not authorized"
         );
         _;
     }
 
     /**
      * @notice Constructor for WrappedVerdiktaToken.
-     * @param _l1Token Address of the VerdiktaToken on Sepolia.
+     * @param _l1Token Address of the VerdiktaToken.
      * @param _l1Bridge Address of the L1 Standard Bridge.
      * @param _l2Bridge Address of the L2 Standard Bridge (must equal L2_STANDARD_BRIDGE).
      */
@@ -181,28 +183,6 @@ contract WrappedVerdiktaToken is ERC20Permit, Ownable, ERC165, IOptimismMintable
         onlyBridge
     {
         _burn(from, amount);
-    }
-
-    /**
-     * @notice Finalizes a deposit from L1 to L2.
-     * Called by the L2 Standard Bridge to finalize an ERC20 deposit.
-     * @param _l1Token Address of the L1 token.
-     * @param _l2Token Address of the L2 token (should equal this contract's address).
-     * @param _to Address to receive the minted tokens.
-     * @param _amount Amount of tokens deposited.
-     */
-    function finalizeDepositERC20(
-        address _l1Token,
-        address _l2Token,
-        address /* _from */,
-        address _to,
-        uint256 _amount,
-        bytes calldata /* _extraData */
-    ) external payable {
-        require(msg.sender == L2_STANDARD_BRIDGE, "Caller is not the L2 Standard Bridge");
-        require(_l2Token == address(this), "L2 token address mismatch");
-        require(_l1Token == l1_Token, "L1 token address mismatch");
-        _mint(_to, _amount);
     }
 }
 
