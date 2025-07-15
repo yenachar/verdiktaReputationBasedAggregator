@@ -50,6 +50,12 @@ contract WrappedVerdiktaToken is ERC20Permit, ERC165, IOptimismMintableERC20, IL
     address public constant L2_STANDARD_BRIDGE =
         0x4200000000000000000000000000000000000010;
 
+    /// @notice Emitted when the bridge mints wrapped tokens on L2.
+    event Mint(address indexed to, uint256 indexed amount);
+
+    /// @notice Emitted when the bridge burns wrapped tokens on L2.
+    event Burn(address indexed from, uint256 indexed amount);
+
     /**
      * @dev Modifier to restrict access to the L2 bridge.
      * Allows either a direct call from the L2 Standard Bridge or conditional from the messenger.
@@ -108,6 +114,14 @@ contract WrappedVerdiktaToken is ERC20Permit, ERC165, IOptimismMintableERC20, IL
     }
 
     /**
+     * @notice Legacy helper for some older tooling.
+     * @return The L2 Standard Bridge address.
+     */
+    function l2Bridge() external pure returns (address) {
+        return L2_STANDARD_BRIDGE;
+    }
+
+    /**
      * @notice ERC165 support.
      */
     function supportsInterface(bytes4 interfaceId) public view virtual override(ERC165) returns (bool) {
@@ -118,10 +132,14 @@ contract WrappedVerdiktaToken is ERC20Permit, ERC165, IOptimismMintableERC20, IL
     }
 
     /**
-     * @notice Mint tokens when bridged from L1.
-     * Can be called by L2StandardBridge or via the messenger.
-     * @param to Address to mint tokens to.
-     * @param amount Amount of tokens to mint.
+     * @notice Mints wVDKA when matching VDKA is locked on L1.
+     * @dev Can only be called by the Standard Bridge (directly) or
+     *      by the messenger when the original L1 sender is the L1 bridge.
+     *
+     * @param to     Receiver of the newly-minted tokens on L2.
+     * @param amount Number of tokens to mint (1:1 with VDKA locked).
+     *
+     * Emits a {Mint} event.
      */
     function mint(address to, uint256 amount)
         external
@@ -129,13 +147,18 @@ contract WrappedVerdiktaToken is ERC20Permit, ERC165, IOptimismMintableERC20, IL
         onlyBridge
     {
         _mint(to, amount);
+        emit Mint(to, amount);
     }
 
     /**
-     * @notice Burn tokens from a specific address (used by the bridge).
-     * Can be called either directly by L2StandardBridge or via the messenger.
-     * @param from Address to burn tokens from.
-     * @param amount Amount of tokens to burn.
+     * @notice Burns wVDKA when the user initiates a withdrawal to L1.
+     * @dev Only callable by the Standard Bridge (or messenger) so the
+     *      circulating supply on L2 never exceeds VDKA locked on L1.
+     *
+     * @param from   Account whose balance will be reduced.
+     * @param amount Amount of tokens to burn (released on L1 after finalization).
+     *
+     * Emits a {Burn} event.
      */
     function burn(address from, uint256 amount)
         external
@@ -143,6 +166,7 @@ contract WrappedVerdiktaToken is ERC20Permit, ERC165, IOptimismMintableERC20, IL
         onlyBridge
     {
         _burn(from, amount);
+        emit Burn(from, amount);
     }
 }
 
