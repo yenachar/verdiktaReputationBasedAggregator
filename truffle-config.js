@@ -103,7 +103,7 @@ module.exports = {
       chain_id: 1,
       gas: 0,
       //gasPrice: 30000000000,   // 30 gwei (tune before deploy)
-      maxFeePerGas:          1e9,          // 1 gwei ceiling
+      maxFeePerGas:          1.4e9,        // 1.4 gwei ceiling
       maxPriorityFeePerGas:   1.5e8,       // 0.15 gwei tip
       confirmations: 2,
       timeoutBlocks: 400,
@@ -124,7 +124,7 @@ module.exports = {
       network_id: 8453,
       chain_id: 8453,
       gas: 10000000,
-      gasPrice: 60000000,    // 0.06 gwei
+      gasPrice: 50000000,    // 0.05 gwei
       confirmations: 2,
       timeoutBlocks: 400,
       networkCheckTimeout: 60000,
@@ -144,7 +144,7 @@ module.exports = {
 
   compilers: {
     solc: {
-      version: "0.8.21",
+      version: "0.8.30",
       settings: {
         optimizer: { enabled: true, runs: 200 }
       }
